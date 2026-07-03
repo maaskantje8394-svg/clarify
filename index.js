@@ -26,8 +26,9 @@ const WELCOME_CHANNEL = '1520535431827951656';
 const CATEGORY_PLUS = '1522741887637651566';
 const CATEGORY_PLUSPLUS = '1522741953568178397';
 const LOG_CHANNEL = '1522742039912124470';
+const STAFF_ROLE = '1522712684775080056';
 
-// ===================== BUILD MAP =====================
+// ===================== BUILD =====================
 const pendingBuilds = new Map();
 
 // ===================== READY =====================
@@ -96,9 +97,9 @@ client.on(Events.MessageCreate, async (message) => {
     embed.setDescription(lines.join('\n'));
 
     const target = message.guild.channels.cache.get(channelId);
+    if (!target) return message.reply('Channel not found.');
 
     target.send({ embeds: [embed] });
-
     message.reply('Embed sent.');
 });
 
@@ -110,12 +111,47 @@ client.on(Events.MessageCreate, async (message) => {
 
         const embed = new EmbedBuilder()
             .setColor('#0a0a0a')
-            .setTitle('<:Clarity:1522719037610790923> Clarity Store')
+            .setTitle('# Clarity+ & Clarity++ <:Clarity:1522719037610790923>')
             .setDescription(
-`Choose your rank:
+`> Unlock exclusive TikTok methods, editing resources, and premium community perks.
 
-Clarity+ (€2.50 / 1 Boost)
-Clarity++ (€5 / 2 Boosts)`
+────────────────────────────────────────────────
+
+## <:U_:1522720864720916510> **Clarity+**
+**Price:** €2.50 or 1 Server Boost
+
+- Lifetime access
+- 5+ exclusive methods
+- Edit help & support
+- Future method updates
+- Private methods channel
+- Exclusive editing resources
+- Community support
+- Special Discord role
+- Priority assistance
+- Access to premium giveaways
+
+────────────────────────────────────────────────
+
+## <:U_:1522720864720916510> **Clarity++**
+**Price:** €5.00 or 2 Server Boosts
+
+Includes everything in Methods, plus:
+
+- Highest quality private methods
+- Advanced editing methods
+- Early access to new releases
+- Premium resources & assets
+- Exclusive guides & tutorials
+- Private request channel
+- Faster support priority
+- Exclusive future content
+- Premium Discord role
+- VIP giveaways & events
+
+────────────────────────────────────────────────
+
+**Interested? Open a ticket in <#1522715255036313662> and choose your preferred payment method.** <:U_:1522720864720916510>`
             );
 
         const row = new ActionRowBuilder().addComponents(
@@ -123,31 +159,32 @@ Clarity++ (€5 / 2 Boosts)`
                 .setCustomId('buy_plus')
                 .setLabel('Clarity+')
                 .setEmoji('<:Clarity:1522719037610790923>')
-                .setStyle(ButtonStyle.Primary),
+                .setStyle(ButtonStyle.Secondary),
 
             new ButtonBuilder()
                 .setCustomId('buy_plusplus')
                 .setLabel('Clarity++')
                 .setEmoji('<:Clarity:1522719037610790923>')
-                .setStyle(ButtonStyle.Success)
+                .setStyle(ButtonStyle.Secondary)
         );
 
         message.channel.send({ embeds: [embed], components: [row] });
     }
 });
 
-// ===================== BUTTONS + TICKETS =====================
+// ===================== TICKETS + CLOSE + RENAME =====================
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
 
-    const member = interaction.member;
     const guild = interaction.guild;
+    const member = interaction.member;
 
     let category = null;
     let name = null;
     let title = null;
     let price = null;
 
+    // ===================== OPEN TICKET =====================
     if (interaction.customId === 'buy_plus') {
         category = CATEGORY_PLUS;
         name = `clarityplus-${member.user.username}`;
@@ -160,6 +197,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
         name = `clarityplusplus-${member.user.username}`;
         title = 'Clarity++ Purchase';
         price = '€5 or 2 Boosts';
+    }
+
+    // ===================== CLOSE =====================
+    if (interaction.customId === 'close_ticket') {
+        if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
+            return interaction.reply({ content: 'No permission.', ephemeral: true });
+        }
+
+        await interaction.reply('🔴 Closing ticket...');
+
+        setTimeout(() => {
+            interaction.channel.delete().catch(() => {});
+        }, 3000);
+
+        return;
+    }
+
+    // ===================== RENAME =====================
+    if (interaction.customId === 'rename_ticket') {
+        if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
+            return interaction.reply({ content: 'No permission.', ephemeral: true });
+        }
+
+        await interaction.reply({ content: 'Send new name in chat.', ephemeral: true });
+
+        const filter = m => m.author.id === member.id;
+        const collected = await interaction.channel.awaitMessages({
+            filter,
+            max: 1,
+            time: 30000
+        });
+
+        if (!collected.size) return;
+
+        const newName = collected.first().content;
+        await interaction.channel.setName(newName).catch(() => {});
+
+        return;
     }
 
     if (!category) return;
@@ -180,6 +255,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     PermissionsBitField.Flags.SendMessages,
                     PermissionsBitField.Flags.ReadMessageHistory
                 ]
+            },
+            {
+                id: STAFF_ROLE,
+                allow: [
+                    PermissionsBitField.Flags.ViewChannel,
+                    PermissionsBitField.Flags.SendMessages,
+                    PermissionsBitField.Flags.ReadMessageHistory
+                ]
             }
         ]
     });
@@ -190,12 +273,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setDescription(
 `Welcome ${member}
 
-Price: ${price}
+💰 Price: ${price}
 
-Please tell us your payment method.`
+A staff member will help you shortly.
+
+<@&1522712684775080056>`
         );
 
-    channel.send({ embeds: [embed] });
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('close_ticket')
+            .setLabel('Close')
+            .setStyle(ButtonStyle.Danger),
+
+        new ButtonBuilder()
+            .setCustomId('rename_ticket')
+            .setLabel('Rename')
+            .setStyle(ButtonStyle.Secondary)
+    );
+
+    await channel.send({
+        content: `<@&1522712684775080056>`,
+        embeds: [embed],
+        components: [row]
+    });
 
     interaction.reply({
         content: `Ticket created: ${channel}`,
@@ -204,7 +305,7 @@ Please tell us your payment method.`
 
     const log = guild.channels.cache.get(LOG_CHANNEL);
     if (log) {
-        log.send(`New ticket: ${channel.name} by ${member.user.tag}`);
+        log.send(`📩 Ticket opened: ${channel.name} by ${member.user.tag}`);
     }
 });
 

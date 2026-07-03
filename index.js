@@ -198,58 +198,79 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // ================= CLOSE =================
-    if (interaction.customId === 'close') {
+if (interaction.customId === 'close') {
 
-        if (!member.roles.cache.has(STAFF_ROLE)) {
-            return interaction.reply({ content: 'No permission.', flags: 64 });
+    if (!member.roles.cache.has(STAFF_ROLE)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 });
+    }
+
+    await interaction.reply({ content: 'Closing ticket...', flags: 64 });
+
+    const messages = await interaction.channel.messages.fetch();
+    const sorted = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+    let transcript = `Transcript — ${interaction.channel.name}\n`;
+    transcript += `──────────────────────────────────────────────────\n\n`;
+
+    sorted.forEach(m => {
+
+        const time = new Date(m.createdTimestamp).toLocaleString();
+
+        if (m.author.bot) {
+            transcript += `${m.author.username}: ${m.content || ''}\n`;
+
+            if (m.embeds.length > 0) {
+                m.embeds.forEach(embed => {
+                    transcript += `  [Embed] ${embed.title || 'No Title'}\n`;
+                    if (embed.description) transcript += `  ${embed.description}\n`;
+                });
+            }
+
+            if (m.attachments.size > 0) {
+                m.attachments.forEach(att => {
+                    transcript += `  [Attachment] ${att.name} — ${att.url}\n`;
+                });
+            }
+
+            transcript += `\n`;
+        } else {
+            transcript += `${m.author.tag}: ${m.content || ''}\n`;
+
+            if (m.attachments.size > 0) {
+                m.attachments.forEach(att => {
+                    transcript += `  [Attachment] ${att.name} — ${att.url}\n`;
+                });
+            }
+
+            transcript += `\n`;
         }
+    });
 
-        await interaction.reply({ content: 'Closing ticket...', flags: 64 });
+    const filePath = path.join('./transcripts', `${interaction.channel.id}.txt`);
+    fs.writeFileSync(filePath, transcript);
 
-        const messages = await interaction.channel.messages.fetch();
+    const log = guild.channels.cache.get(LOG_CHANNEL);
 
-        const html = `
-        <html>
-        <head>
-            <style>
-                body { background:#0a0a0a; color:white; font-family:Arial; }
-                .msg { padding:8px; border-bottom:1px solid #222; }
-                .author { color:#00aaff; font-weight:bold; }
-            </style>
-        </head>
-        <body>
-            <h2>Transcript ${interaction.channel.name}</h2>
-            ${messages.map(m =>
-                `<div class="msg"><span class="author">${m.author.tag}</span><br>${m.content || '[embed]'}</div>`
-            ).reverse().join('')}
-        </body>
-        </html>`;
-
-        const filePath = path.join('./transcripts', `${interaction.channel.id}.html`);
-        fs.writeFileSync(filePath, html);
-
-        const log = guild.channels.cache.get(LOG_CHANNEL);
-
-        if (log) {
-            log.send({
-                embeds: [
-                    new EmbedBuilder()
-                        .setColor('#0a0a0a')
-                        .setTitle('Ticket Closed')
-                        .setDescription(
+    if (log) {
+        log.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor('#0a0a0a')
+                    .setTitle('Ticket Closed')
+                    .setDescription(
 `Channel: ${interaction.channel.name}
 Closed by: ${member.user.tag}
 Claimed: ${claimedTickets.get(interaction.channel.id) || 'None'}
 Time: <t:${Math.floor(Date.now()/1000)}:F>`
-                        )
-                ],
-                files: [filePath]
-            });
-        }
-
-        return setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
+                    )
+            ],
+            files: [filePath]
+        });
     }
 
+    return setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
+}
+    
     // ================= CLAIM =================
     if (interaction.customId === 'claim') {
 

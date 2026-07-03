@@ -119,35 +119,56 @@ client.on(Events.MessageCreate, async (message) => {
             .setDescription(
 `> Unlock exclusive TikTok methods, editing resources, and premium community perks.
 
-────────────────────────────────────────
+────────────────────────────────────────────────
 
-## <:U_:1522720864720916510> Clarity+
+## <:U_:1522720864720916510> **Clarity+**
+**Price:** \`€2.50\` **or** \`1 Server Boost\`
 
-€2.50 / 1 Boost
 - Lifetime access
-- 5+ methods
-- edit help
-- updates
+- 5+ exclusive methods
+- Edit help & support
+- Future method updates
+- Private methods channel
+- Exclusive editing resources
+- Community support
+- Special Discord role
+- Priority assistance
+- Access to premium giveaways
 
-────────────────────────────────────────
+────────────────────────────────────────────────
 
-## <:U_:1522720864720916510> Clarity++
+## <:U_:1522720864720916510> **Clarity++**
+**Price:** \`€5.00\` **or** \`2 Server Boosts\`
 
-€5 / 2 Boosts
-- premium methods
-- early access
-- VIP content`
+Includes **everything in Methods**, plus:
+
+- Highest quality private methods
+- Advanced editing methods
+- Early access to new releases
+- Premium resources & assets
+- Exclusive guides & tutorials
+- Private request channel
+- Faster support priority
+- Exclusive future content
+- Premium Discord role
+- VIP giveaways & events
+
+────────────────────────────────────────────────
+
+**Interested? Open a ticket in <#1522715255036313662> and choose your preferred payment method.** <:U_:1522719037610790923>`
             );
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('buy_plus')
                 .setLabel('Clarity+')
+                .setEmoji('<:Clarity:1522719037610790923>')
                 .setStyle(ButtonStyle.Secondary),
 
             new ButtonBuilder()
                 .setCustomId('buy_plusplus')
                 .setLabel('Clarity++')
+                .setEmoji('<:Clarity:1522719037610790923>')
                 .setStyle(ButtonStyle.Secondary)
         );
 

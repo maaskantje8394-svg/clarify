@@ -14,6 +14,12 @@ import {
     ButtonStyle
 } from 'discord.js';
 
+// ================= SAFE FOLDER =================
+if (!fs.existsSync('./transcripts')) {
+    fs.mkdirSync('./transcripts');
+}
+
+// ================= CLIENT =================
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -51,8 +57,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
         )
         .setImage(
             'https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg'
-        )
-        .setTimestamp();
+        );
 
     channel.send({ embeds: [embed] });
 });
@@ -71,7 +76,7 @@ client.on(Events.MessageCreate, async (message) => {
         if (!channel) return message.reply('Use: `!build #channel`');
 
         pendingBuilds.set(message.author.id, channel.id);
-        return message.reply('Send embed content now or type cancel.');
+        return message.reply('Send embed content or type cancel.');
     }
 
     if (!pendingBuilds.has(message.author.id)) return;
@@ -94,7 +99,6 @@ client.on(Events.MessageCreate, async (message) => {
     const embed = new EmbedBuilder().setColor('#0a0a0a');
 
     if (title) embed.setTitle(title);
-
     embed.setDescription(lines.join('\n'));
 
     const target = message.guild.channels.cache.get(channelId);
@@ -111,23 +115,23 @@ client.on(Events.MessageCreate, async (message) => {
 
         const embed = new EmbedBuilder()
             .setColor('#0a0a0a')
+            .setTitle('Clarity+ & Clarity++ <:Clarity:1522719037610790923>')
             .setDescription(
-`# Clarity+ & Clarity++ <:Clarity:1522719037610790923>
+`> Unlock exclusive TikTok methods, editing resources, and premium community perks.
 
-> Unlock exclusive TikTok methods, editing resources, and premium community perks.
+────────────────────────────────────────
 
-────────────────────────
-
-## Clarity+
+## <:U_:1522720864720916510> Clarity+
 
 €2.50 / 1 Boost
+- Lifetime access
 - 5+ methods
-- editing help
+- edit help
 - updates
 
-────────────────────────
+────────────────────────────────────────
 
-## Clarity++
+## <:U_:1522720864720916510> Clarity++
 
 €5 / 2 Boosts
 - premium methods
@@ -158,26 +162,90 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const guild = interaction.guild;
     const member = interaction.member;
 
-    let category, name, title, price;
+    let category, title, price;
 
     if (interaction.customId === 'buy_plus') {
         category = CATEGORY_PLUS;
-        name = `clarityplus-${member.user.username}`;
         title = 'Clarity+';
         price = '€2.50 / 1 Boost';
     }
 
     if (interaction.customId === 'buy_plusplus') {
         category = CATEGORY_PLUSPLUS;
-        name = `clarityplusplus-${member.user.username}`;
         title = 'Clarity++';
         price = '€5 / 2 Boosts';
     }
 
+    // ================= CLOSE =================
+    if (interaction.customId === 'close') {
+
+        if (!member.roles.cache.has(STAFF_ROLE)) {
+            return interaction.reply({ content: 'No permission.', flags: 64 });
+        }
+
+        await interaction.reply({ content: 'Closing ticket...', flags: 64 });
+
+        const messages = await interaction.channel.messages.fetch();
+
+        const html = `
+        <html>
+        <head>
+            <style>
+                body { background:#0a0a0a; color:white; font-family:Arial; }
+                .msg { padding:8px; border-bottom:1px solid #222; }
+                .author { color:#00aaff; font-weight:bold; }
+            </style>
+        </head>
+        <body>
+            <h2>Transcript ${interaction.channel.name}</h2>
+            ${messages.map(m =>
+                `<div class="msg"><span class="author">${m.author.tag}</span><br>${m.content || '[embed]'}</div>`
+            ).reverse().join('')}
+        </body>
+        </html>`;
+
+        const filePath = path.join('./transcripts', `${interaction.channel.id}.html`);
+        fs.writeFileSync(filePath, html);
+
+        const log = guild.channels.cache.get(LOG_CHANNEL);
+
+        if (log) {
+            log.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor('#0a0a0a')
+                        .setTitle('Ticket Closed')
+                        .setDescription(
+`Channel: ${interaction.channel.name}
+Closed by: ${member.user.tag}
+Claimed: ${claimedTickets.get(interaction.channel.id) || 'None'}
+Time: <t:${Math.floor(Date.now()/1000)}:F>`
+                        )
+                ],
+                files: [filePath]
+            });
+        }
+
+        return setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
+    }
+
+    // ================= CLAIM =================
+    if (interaction.customId === 'claim') {
+
+        if (!member.roles.cache.has(STAFF_ROLE)) {
+            return interaction.reply({ content: 'No permission.', flags: 64 });
+        }
+
+        claimedTickets.set(interaction.channel.id, member.user.tag);
+
+        return interaction.reply({ content: `Claimed by ${member}`, flags: 64 });
+    }
+
+    // ================= OPEN =================
     if (!category) return;
 
     const channel = await guild.channels.create({
-        name,
+        name: `${title.toLowerCase()}-${member.user.username}`,
         type: ChannelType.GuildText,
         parent: category,
         permissionOverwrites: [
@@ -220,89 +288,17 @@ A staff member will help you soon.
         components: [row]
     });
 
-    // LOG
-    const log = guild.channels.cache.get(LOG_CHANNEL);
-    if (log) {
-        log.send({
-            embeds: [
-                new EmbedBuilder()
-                    .setColor('#0a0a0a')
-                    .setTitle('Ticket Created')
-                    .setDescription(
-`User: ${member.user.tag}
-Ticket: ${channel.name}
-Type: ${title}
-Price: ${price}
-Time: <t:${Math.floor(Date.now()/1000)}:F>`
-                    )
-            ]
-        });
-    }
-
-    interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
-});
-
-// ================= CLAIM + CLOSE =================
-client.on(Events.InteractionCreate, async (interaction) => {
-    if (!interaction.isButton()) return;
-
-    const member = interaction.member;
-    const channel = interaction.channel;
-
-    // CLAIM
-    if (interaction.customId === 'claim') {
-        if (!member.roles.cache.has(STAFF_ROLE)) {
-            return interaction.reply({ content: 'No permission.', ephemeral: true });
-        }
-
-        claimedTickets.set(channel.id, member.id);
-
-        return interaction.reply(`Claimed by ${member}`);
-    }
-
-    // CLOSE
-    if (interaction.customId === 'close') {
-
-        if (!member.roles.cache.has(STAFF_ROLE)) {
-            return interaction.reply({ content: 'No permission.', ephemeral: true });
-        }
-
-        await interaction.reply('Closing ticket...');
-
-        // TRANSCRIPT
-        const messages = await channel.messages.fetch();
-        const transcript = messages
-            .map(m => `${m.author.tag}: ${m.content}`)
-            .reverse()
-            .join('\n');
-
-        const filePath = path.join('./transcripts', `${channel.id}.txt`);
-        fs.writeFileSync(filePath, transcript);
-
-        const log = channel.guild.channels.cache.get(LOG_CHANNEL);
-
-        if (log) {
-            log.send({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle('Ticket Closed')
-                        .setDescription(
-`Channel: ${channel.name}
-Closed by: ${member.user.tag}
-Claimed by: ${claimedTickets.get(channel.id) || 'None'}`
-                        )
-                ]
-            });
-        }
-
-        setTimeout(() => {
-            channel.delete().catch(() => {});
-        }, 3000);
-    }
+    return interaction.reply({
+        content: `Ticket created: ${channel}`,
+        flags: 64
+    });
 });
 
 // ================= SERVER =================
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => res.end('Bot online')).listen(PORT);
+
+http.createServer((req, res) => {
+    res.end('Bot online');
+}).listen(PORT);
 
 client.login(process.env.TOKEN);

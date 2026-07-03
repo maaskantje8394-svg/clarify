@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import {
     Client,
     GatewayIntentBits,
@@ -21,22 +23,23 @@ const client = new Client({
     ]
 });
 
-// ===================== IDS =====================
+// ================= IDS =================
 const WELCOME_CHANNEL = '1520535431827951656';
 const CATEGORY_PLUS = '1522741887637651566';
 const CATEGORY_PLUSPLUS = '1522741953568178397';
 const LOG_CHANNEL = '1522742039912124470';
 const STAFF_ROLE = '1522712684775080056';
 
-// ===================== BUILD =====================
+// ================= STATE =================
 const pendingBuilds = new Map();
+const claimedTickets = new Map();
 
-// ===================== READY =====================
+// ================= READY =================
 client.once(Events.ClientReady, () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// ===================== WELCOME =====================
+// ================= WELCOME =================
 client.on(Events.GuildMemberAdd, async (member) => {
     const channel = member.guild.channels.cache.get(WELCOME_CHANNEL);
     if (!channel) return;
@@ -47,14 +50,14 @@ client.on(Events.GuildMemberAdd, async (member) => {
             `<:Clarity:1522719037610790923> Welcome ${member} to **${member.guild.name}**!`
         )
         .setImage(
-            'https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg?ex=6a4986d3&is=6a483553&hm=e8ece5dd2a9b50cfe9b9af1d47655b7031a716a3ab80af0fac65a4926576aa50'
+            'https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg'
         )
         .setTimestamp();
 
     channel.send({ embeds: [embed] });
 });
 
-// ===================== !BUILD =====================
+// ================= BUILD =================
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot || !message.guild) return;
 
@@ -68,8 +71,7 @@ client.on(Events.MessageCreate, async (message) => {
         if (!channel) return message.reply('Use: `!build #channel`');
 
         pendingBuilds.set(message.author.id, channel.id);
-
-        return message.reply('Send embed content now. Type cancel to stop.');
+        return message.reply('Send embed content now or type cancel.');
     }
 
     if (!pendingBuilds.has(message.author.id)) return;
@@ -89,21 +91,19 @@ client.on(Events.MessageCreate, async (message) => {
         title = lines.shift().slice(2);
     }
 
-    const embed = new EmbedBuilder()
-        .setColor('#0a0a0a');
+    const embed = new EmbedBuilder().setColor('#0a0a0a');
 
     if (title) embed.setTitle(title);
 
     embed.setDescription(lines.join('\n'));
 
     const target = message.guild.channels.cache.get(channelId);
-    if (!target) return message.reply('Channel not found.');
+    if (target) target.send({ embeds: [embed] });
 
-    target.send({ embeds: [embed] });
     message.reply('Embed sent.');
 });
 
-// ===================== !PANEL =====================
+// ================= PANEL =================
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
@@ -111,60 +111,39 @@ client.on(Events.MessageCreate, async (message) => {
 
         const embed = new EmbedBuilder()
             .setColor('#0a0a0a')
-            .setTitle('# Clarity+ & Clarity++ <:Clarity:1522719037610790923>')
             .setDescription(
-`> Unlock exclusive TikTok methods, editing resources, and premium community perks.
+`# Clarity+ & Clarity++ <:Clarity:1522719037610790923>
 
-────────────────────────────────────────────────
+> Unlock exclusive TikTok methods, editing resources, and premium community perks.
 
-## <:U_:1522720864720916510> **Clarity+**
-**Price:** €2.50 or 1 Server Boost
+────────────────────────
 
-- Lifetime access
-- 5+ exclusive methods
-- Edit help & support
-- Future method updates
-- Private methods channel
-- Exclusive editing resources
-- Community support
-- Special Discord role
-- Priority assistance
-- Access to premium giveaways
+## Clarity+
 
-────────────────────────────────────────────────
+€2.50 / 1 Boost
+- 5+ methods
+- editing help
+- updates
 
-## <:U_:1522720864720916510> **Clarity++**
-**Price:** €5.00 or 2 Server Boosts
+────────────────────────
 
-Includes everything in Methods, plus:
+## Clarity++
 
-- Highest quality private methods
-- Advanced editing methods
-- Early access to new releases
-- Premium resources & assets
-- Exclusive guides & tutorials
-- Private request channel
-- Faster support priority
-- Exclusive future content
-- Premium Discord role
-- VIP giveaways & events
-
-────────────────────────────────────────────────
-
-**Interested? Open a ticket in <#1522715255036313662> and choose your preferred payment method.** <:U_:1522720864720916510>`
+€5 / 2 Boosts
+- premium methods
+- early access
+- VIP content`
             );
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('buy_plus')
                 .setLabel('Clarity+')
-                .setEmoji('<:Clarity:1522719037610790923>')
                 .setStyle(ButtonStyle.Secondary),
 
             new ButtonBuilder()
                 .setCustomId('buy_plusplus')
                 .setLabel('Clarity++')
-                .setEmoji('<:Clarity:1522719037610790923>')
                 .setStyle(ButtonStyle.Secondary)
         );
 
@@ -172,69 +151,27 @@ Includes everything in Methods, plus:
     }
 });
 
-// ===================== TICKETS + CLOSE + RENAME =====================
+// ================= TICKETS =================
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
 
     const guild = interaction.guild;
     const member = interaction.member;
 
-    let category = null;
-    let name = null;
-    let title = null;
-    let price = null;
+    let category, name, title, price;
 
-    // ===================== OPEN TICKET =====================
     if (interaction.customId === 'buy_plus') {
         category = CATEGORY_PLUS;
         name = `clarityplus-${member.user.username}`;
-        title = 'Clarity+ Purchase';
-        price = '€2.50 or 1 Boost';
+        title = 'Clarity+';
+        price = '€2.50 / 1 Boost';
     }
 
     if (interaction.customId === 'buy_plusplus') {
         category = CATEGORY_PLUSPLUS;
         name = `clarityplusplus-${member.user.username}`;
-        title = 'Clarity++ Purchase';
-        price = '€5 or 2 Boosts';
-    }
-
-    // ===================== CLOSE =====================
-    if (interaction.customId === 'close_ticket') {
-        if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
-            return interaction.reply({ content: 'No permission.', ephemeral: true });
-        }
-
-        await interaction.reply('🔴 Closing ticket...');
-
-        setTimeout(() => {
-            interaction.channel.delete().catch(() => {});
-        }, 3000);
-
-        return;
-    }
-
-    // ===================== RENAME =====================
-    if (interaction.customId === 'rename_ticket') {
-        if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
-            return interaction.reply({ content: 'No permission.', ephemeral: true });
-        }
-
-        await interaction.reply({ content: 'Send new name in chat.', ephemeral: true });
-
-        const filter = m => m.author.id === member.id;
-        const collected = await interaction.channel.awaitMessages({
-            filter,
-            max: 1,
-            time: 30000
-        });
-
-        if (!collected.size) return;
-
-        const newName = collected.first().content;
-        await interaction.channel.setName(newName).catch(() => {});
-
-        return;
+        title = 'Clarity++';
+        price = '€5 / 2 Boosts';
     }
 
     if (!category) return;
@@ -244,51 +181,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
         type: ChannelType.GuildText,
         parent: category,
         permissionOverwrites: [
-            {
-                id: guild.id,
-                deny: [PermissionsBitField.Flags.ViewChannel]
-            },
-            {
-                id: member.id,
-                allow: [
-                    PermissionsBitField.Flags.ViewChannel,
-                    PermissionsBitField.Flags.SendMessages,
-                    PermissionsBitField.Flags.ReadMessageHistory
-                ]
-            },
-            {
-                id: STAFF_ROLE,
-                allow: [
-                    PermissionsBitField.Flags.ViewChannel,
-                    PermissionsBitField.Flags.SendMessages,
-                    PermissionsBitField.Flags.ReadMessageHistory
-                ]
-            }
+            { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+            { id: member.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+            { id: STAFF_ROLE, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
         ]
     });
 
     const embed = new EmbedBuilder()
         .setColor('#0a0a0a')
-        .setTitle(`<:Clarity:1522719037610790923> ${title}`)
         .setDescription(
-`Welcome ${member}
+`<:Clarity:1522719037610790923> ${title}
 
-💰 Price: ${price}
+User: ${member}
 
-A staff member will help you shortly.
+Price:
+\`\`\`${price}\`\`\`
+
+A staff member will help you soon.
 
 <@&1522712684775080056>`
         );
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId('close_ticket')
+            .setCustomId('close')
             .setLabel('Close')
             .setStyle(ButtonStyle.Danger),
 
         new ButtonBuilder()
-            .setCustomId('rename_ticket')
-            .setLabel('Rename')
+            .setCustomId('claim')
+            .setLabel('Claim')
             .setStyle(ButtonStyle.Secondary)
     );
 
@@ -298,22 +220,89 @@ A staff member will help you shortly.
         components: [row]
     });
 
-    interaction.reply({
-        content: `Ticket created: ${channel}`,
-        ephemeral: true
-    });
-
+    // LOG
     const log = guild.channels.cache.get(LOG_CHANNEL);
     if (log) {
-        log.send(`📩 Ticket opened: ${channel.name} by ${member.user.tag}`);
+        log.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor('#0a0a0a')
+                    .setTitle('Ticket Created')
+                    .setDescription(
+`User: ${member.user.tag}
+Ticket: ${channel.name}
+Type: ${title}
+Price: ${price}
+Time: <t:${Math.floor(Date.now()/1000)}:F>`
+                    )
+            ]
+        });
+    }
+
+    interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
+});
+
+// ================= CLAIM + CLOSE =================
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isButton()) return;
+
+    const member = interaction.member;
+    const channel = interaction.channel;
+
+    // CLAIM
+    if (interaction.customId === 'claim') {
+        if (!member.roles.cache.has(STAFF_ROLE)) {
+            return interaction.reply({ content: 'No permission.', ephemeral: true });
+        }
+
+        claimedTickets.set(channel.id, member.id);
+
+        return interaction.reply(`Claimed by ${member}`);
+    }
+
+    // CLOSE
+    if (interaction.customId === 'close') {
+
+        if (!member.roles.cache.has(STAFF_ROLE)) {
+            return interaction.reply({ content: 'No permission.', ephemeral: true });
+        }
+
+        await interaction.reply('Closing ticket...');
+
+        // TRANSCRIPT
+        const messages = await channel.messages.fetch();
+        const transcript = messages
+            .map(m => `${m.author.tag}: ${m.content}`)
+            .reverse()
+            .join('\n');
+
+        const filePath = path.join('./transcripts', `${channel.id}.txt`);
+        fs.writeFileSync(filePath, transcript);
+
+        const log = channel.guild.channels.cache.get(LOG_CHANNEL);
+
+        if (log) {
+            log.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle('Ticket Closed')
+                        .setDescription(
+`Channel: ${channel.name}
+Closed by: ${member.user.tag}
+Claimed by: ${claimedTickets.get(channel.id) || 'None'}`
+                        )
+                ]
+            });
+        }
+
+        setTimeout(() => {
+            channel.delete().catch(() => {});
+        }, 3000);
     }
 });
 
-// ===================== SERVER =====================
+// ================= SERVER =================
 const PORT = process.env.PORT || 3000;
-
-http.createServer((req, res) => {
-    res.end('Bot online');
-}).listen(PORT);
+http.createServer((req, res) => res.end('Bot online')).listen(PORT);
 
 client.login(process.env.TOKEN);

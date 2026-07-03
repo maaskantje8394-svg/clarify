@@ -25,6 +25,7 @@ client.once(Events.ClientReady, () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
+// Welcome Message
 client.on(Events.GuildMemberAdd, async (member) => {
     const channel = member.guild.channels.cache.get(WELCOME_CHANNEL);
     if (!channel) return;
@@ -44,10 +45,10 @@ client.on(Events.GuildMemberAdd, async (member) => {
     });
 });
 
+// Embed Builder
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    // Alleen admins
     if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator))
         return;
 
@@ -58,19 +59,17 @@ client.on(Events.MessageCreate, async (message) => {
             message.guild.channels.cache.get(message.content.split(' ')[1]);
 
         if (!channel || channel.type !== ChannelType.GuildText) {
-            return message.reply(
-                'Usage: `!build #channel`'
-            );
+            return message.reply('Usage: `!build #channel`');
         }
 
         pendingBuilds.set(message.author.id, channel.id);
 
         return message.reply(
-            '✍️ Send the embed content in your **next message**.\nType `cancel` to cancel.'
+            '✍️ Send the embed content in your next message.\nType `cancel` to cancel.'
         );
     }
 
-    // Builder actief?
+    // No active builder
     if (!pendingBuilds.has(message.author.id)) return;
 
     if (message.content.toLowerCase() === 'cancel') {
@@ -92,11 +91,7 @@ client.on(Events.MessageCreate, async (message) => {
     const description = lines.join('\n').trim();
 
     const embed = new EmbedBuilder()
-        .setColor('#0a0a0a')
-        .setThumbnail(
-            'https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg?ex=6a4986d3&is=6a483553&hm=e8ece5dd2a9b50cfe9b9af1d47655b7031a716a3ab80af0fac65a4926576aa50'
-        )
-        .setTimestamp();
+        .setColor('#0a0a0a');
 
     if (title) embed.setTitle(title);
 

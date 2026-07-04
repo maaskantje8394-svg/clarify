@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import {
     Client,
+    Collection,
     GatewayIntentBits,
     EmbedBuilder,
     Events,
@@ -35,10 +36,16 @@ const CATEGORY_PLUS = '1522741887637651566';
 const CATEGORY_PLUSPLUS = '1522741953568178397';
 const LOG_CHANNEL = '1522742039912124470';
 const STAFF_ROLE = '1522712684775080056';
+const RAID_CHANNEL = '1522886310002557069';
+const APPEAL_CHANNEL = '1522893846571384862';
+const GUILD_ID = '1520173364436664390';
+const INVITE = 'https://discord.gg/ZptAeYahhc';
 
 // ================= STATE =================
 const pendingBuilds = new Map();
 const claimedTickets = new Map();
+const pendingAppeals = new Map();
+const appealSessions = new Collection();
 
 // ================= READY =================
 client.once(Events.ClientReady, () => {
@@ -334,6 +341,207 @@ A staff member will help you soon.
         content: `Ticket created: ${channel}`,
         flags: 64
     });
+});
+
+// ================= ANTI RAID =================
+
+client.on(Events.MessageCreate, async (message) => {
+
+    if (!message.guild) return;
+    if (message.author.bot) return;
+
+    if (message.channel.id !== RAID_CHANNEL) return;
+
+    try {
+        await message.delete().catch(() => {});
+    } catch {}
+
+    const member = message.member;
+
+    if (!member) return;
+
+    try {
+
+        const embed = new EmbedBuilder()
+            .setColor('#0a0a0a')
+            .setTitle('You Have Been BANNED <:Clarity:1522719037610790923>')
+            .setDescription(
+`> Our automated **Anti Raid / Anti Hack system** detected suspicious activity.
+
+-# If you believe this was a mistake, you can submit a ban **appeal below.**`
+            )
+            .setImage('https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg');
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('ban_appeal')
+                .setLabel('Ban Appeal')
+                .setEmoji('<:Clarity:1522719037610790923>')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        await member.send({
+            embeds: [embed],
+            components: [row]
+        }).catch(() => {});
+
+    } catch {}
+
+    try {
+
+        await member.ban({
+            deleteMessageSeconds: 60,
+            reason: 'Anti Raid / Anti Hack Protection'
+        });
+
+        console.log(`${member.user.tag} banned by Anti Raid`);
+
+    } catch (err) {
+
+        console.log(err);
+
+    }
+
+});
+// ================= APPEAL QUESTIONS =================
+
+async function startAppealQuestions(user) {
+
+    const dm = await user.createDM();
+
+    const questions = [
+        'Why do you believe your ban should be removed?',
+        'What happened before you were banned?',
+        'Is there anything else you would like the staff team to know?'
+    ];
+
+    const answers = [];
+
+    await dm.send({
+        embeds: [
+            new EmbedBuilder()
+                .setColor('#0a0a0a')
+                .setTitle('Ban Appeal')
+                .setDescription(
+`Please answer the following questions.
+
+You have **5 minutes** per question.
+
+Your appeal will be reviewed by our staff team.`
+                )
+        ]
+    });
+
+    for (let i = 0; i < questions.length; i++) {
+
+        await dm.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor('#0a0a0a')
+                    .setTitle(`Question ${i + 1}/3`)
+                    .setDescription(questions[i])
+            ]
+        });
+
+        const collected = await dm.awaitMessages({
+            filter: m => m.author.id === user.id,
+            max: 1,
+            time: 300000
+        });
+
+        if (!collected.size) {
+            await dm.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor('#0a0a0a')
+                        .setDescription('Your appeal has expired because you did not answer in time.')
+                ]
+            });
+
+            return;
+        }
+
+        answers.push(collected.first().content);
+    }
+
+    const appealChannel = client.channels.cache.get(APPEAL_CHANNEL);
+
+    if (!appealChannel) return;
+
+    await appealChannel.send({
+        embeds: [
+            new EmbedBuilder()
+                .setColor('#0a0a0a')
+                .setTitle('New Ban Appeal')
+                .setThumbnail(user.displayAvatarURL())
+                .addFields(
+                    {
+                        name: 'User',
+                        value: `${user.tag}\n\`${user.id}\``
+                    },
+                    {
+                        name: 'Question 1',
+                        value: answers[0]
+                    },
+                    {
+                        name: 'Question 2',
+                        value: answers[1]
+                    },
+                    {
+                        name: 'Question 3',
+                        value: answers[2]
+                    }
+                )
+                .setTimestamp()
+        ]
+    });
+
+    await dm.send({
+        embeds: [
+            new EmbedBuilder()
+                .setColor('#0a0a0a')
+                .setDescription('✅ Your appeal has been submitted successfully.')
+        ]
+    });
+
+}
+
+// ================= BAN APPEAL BUTTON =================
+
+client.on(Events.InteractionCreate, async (interaction) => {
+
+    if (!interaction.isButton()) return;
+
+    if (interaction.customId !== 'ban_appeal') return;
+
+    if (appealSessions.has(interaction.user.id)) {
+        return interaction.reply({
+            content: 'You already have an appeal in progress.',
+            ephemeral: true
+        });
+    }
+
+    appealSessions.set(interaction.user.id, true);
+
+    await interaction.reply({
+        content: 'Check your DMs. We will ask you a few questions.',
+        ephemeral: true
+    });
+
+    try {
+        await startAppealQuestions(interaction.user);
+    } catch (err) {
+        console.error(err);
+
+        try {
+            await interaction.user.send(
+                'An error occurred while creating your appeal. Please try again later.'
+            );
+        } catch {}
+    }
+
+    appealSessions.delete(interaction.user.id);
+
 });
 
 // ================= SERVER =================

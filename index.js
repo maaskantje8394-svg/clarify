@@ -44,6 +44,7 @@ const INVITE = 'https://discord.gg/ZptAeYahhc';
 // ================= STATE =================
 const pendingBuilds = new Map();
 const claimedTickets = new Map();
+const pendingAppeals = new Map();
 const appealSessions = new Collection();
 
 // ================= READY =================
@@ -402,10 +403,116 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
 });
+// ================= APPEAL QUESTIONS =================
+
+async function startAppealQuestions(user) {
+
+    const dm = await user.createDM();
+
+    const questions = [
+        'Why do you believe your ban should be removed?',
+        'What happened before you were banned?',
+        'Is there anything else you would like the staff team to know?'
+    ];
+
+    const answers = [];
+
+    await dm.send({
+        embeds: [
+            new EmbedBuilder()
+                .setColor('#0a0a0a')
+                .setTitle('Ban Appeal')
+                .setDescription(
+`Please answer the following questions.
+
+You have **5 minutes** per question.
+
+Your appeal will be reviewed by our staff team.`
+                )
+        ]
+    });
+
+    for (let i = 0; i < questions.length; i++) {
+
+        await dm.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor('#0a0a0a')
+                    .setTitle(`Question ${i + 1}/3`)
+                    .setDescription(questions[i])
+            ]
+        });
+
+        const collected = await dm.awaitMessages({
+            filter: m => m.author.id === user.id,
+            max: 1,
+            time: 300000
+        });
+
+        if (!collected.size) {
+            await dm.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor('#0a0a0a')
+                        .setDescription('Your appeal has expired because you did not answer in time.')
+                ]
+            });
+
+            return;
+        }
+
+        answers.push(collected.first().content);
+    }
+
+    const appealChannel = client.channels.cache.get(APPEAL_CHANNEL);
+
+    if (!appealChannel) return;
+
+    await appealChannel.send({
+        embeds: [
+            new EmbedBuilder()
+                .setColor('#0a0a0a')
+                .setTitle('New Ban Appeal')
+                .setThumbnail(user.displayAvatarURL())
+                .addFields(
+                    {
+                        name: 'User',
+                        value: `${user.tag}\n\`${user.id}\``
+                    },
+                    {
+                        name: 'Question 1',
+                        value: answers[0]
+                    },
+                    {
+                        name: 'Question 2',
+                        value: answers[1]
+                    },
+                    {
+                        name: 'Question 3',
+                        value: answers[2]
+                    }
+                )
+                .setTimestamp()
+        ]
+    });
+
+    await dm.send({
+        embeds: [
+            new EmbedBuilder()
+                .setColor('#0a0a0a')
+                .setDescription('✅ Your appeal has been submitted successfully.')
+        ]
+    });
+
+}
 
 // ================= BAN APPEAL BUTTON =================
 
-if (interaction.customId === 'ban_appeal') {
+client.on(Events.InteractionCreate, async (interaction) => {
+
+    if (!interaction.isButton()) return;
+
+    if (interaction.customId !== 'ban_appeal') return;
 
     if (appealSessions.has(interaction.user.id)) {
         return interaction.reply({
@@ -416,27 +523,26 @@ if (interaction.customId === 'ban_appeal') {
 
     appealSessions.set(interaction.user.id, true);
 
+    await interaction.reply({
+        content: 'Check your DMs. We will ask you a few questions.',
+        ephemeral: true
+    });
+
     try {
-        await interaction.reply({
-            content: 'Check your DMs. We will ask you a few questions.',
-            ephemeral: true
-        });
-
         await startAppealQuestions(interaction.user);
-
     } catch (err) {
-        console.error('Appeal error:', err);
+        console.error(err);
 
         try {
-            await interaction.followUp({
-                content: 'I could not DM you. Please enable DMs and try again.',
-                ephemeral: true
-            });
+            await interaction.user.send(
+                'An error occurred while creating your appeal. Please try again later.'
+            );
         } catch {}
-    } finally {
-        appealSessions.delete(interaction.user.id);
     }
-}
+
+    appealSessions.delete(interaction.user.id);
+
+});
 
 // ================= SERVER =================
 const PORT = process.env.PORT || 3000;

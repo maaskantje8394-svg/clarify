@@ -6,6 +6,7 @@ import {
     Client,
     Collection,
     GatewayIntentBits,
+    Partials,
     EmbedBuilder,
     Events,
     PermissionsBitField,
@@ -21,13 +22,20 @@ if (!fs.existsSync('./transcripts')) {
 }
 
 // ================= CLIENT =================
+// FIX: DirectMessages intent + Partials toegevoegd.
+// Zonder deze twee kan de bot geen berichten/interacties in DM's
+// goed verwerken -> dit was de oorzaak van "interaction failed"
+// zodra iemand op de Ban Appeal knop in zijn DM klikte, en de reden
+// dat awaitMessages() in de DM nooit antwoorden binnenkreeg.
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.User]
 });
 
 // ================= IDS =================
@@ -44,7 +52,6 @@ const INVITE = 'https://discord.gg/ZptAeYahhc';
 // ================= STATE =================
 const pendingBuilds = new Map();
 const claimedTickets = new Map();
-const pendingAppeals = new Map();
 const appealSessions = new Collection();
 
 // ================= READY =================
@@ -187,6 +194,11 @@ Includes **everything in Methods**, plus:
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
 
+    // Deze listener is alleen voor het ticket-systeem.
+    // Appeal-knoppen worden verderop in aparte listeners afgehandeld.
+    const ticketCustomIds = ['buy_plus', 'buy_plusplus', 'close', 'claim'];
+    if (!ticketCustomIds.includes(interaction.customId)) return;
+
     const guild = interaction.guild;
     const member = interaction.member;
 
@@ -220,8 +232,6 @@ if (interaction.customId === 'close') {
     transcript += `──────────────────────────────────────────────────\n\n`;
 
     sorted.forEach(m => {
-
-        const time = new Date(m.createdTimestamp).toLocaleString();
 
         if (m.author.bot) {
             transcript += `${m.author.username}: ${m.content || ''}\n`;
@@ -403,6 +413,7 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
 });
+
 // ================= APPEAL QUESTIONS =================
 
 async function startAppealQuestions(user) {
@@ -461,40 +472,52 @@ Your appeal will be reviewed by our staff team.`
             return;
         }
 
-        answers.push(collected.first().content);
+        answers.push(collected.first().content || '*No text content*');
     }
 
     const appealChannel = client.channels.cache.get(APPEAL_CHANNEL);
 
     if (!appealChannel) return;
 
-    await appealChannel.send({
-        embeds: [
-            new EmbedBuilder()
-                .setColor('#0a0a0a')
-                .setTitle('New Ban Appeal')
-                .setThumbnail(user.displayAvatarURL())
-                .addFields(
-                    {
-                        name: 'User',
-                        value: `${user.tag}\n\`${user.id}\``
-                    },
-                    {
-                        name: 'Question 1',
-                        value: answers[0]
-                    },
-                    {
-                        name: 'Question 2',
-                        value: answers[1]
-                    },
-                    {
-                        name: 'Question 3',
-                        value: answers[2]
-                    }
-                )
-                .setTimestamp()
-        ]
-    });
+    // FIX/NIEUW: Accept / Deny knoppen op de appeal embed.
+    // De user id zit verwerkt in de customId zodat we later weten
+    // wie geaccepteerd/afgewezen moet worden.
+    const embed = new EmbedBuilder()
+        .setColor('#0a0a0a')
+        .setTitle('New Ban Appeal')
+        .setThumbnail(user.displayAvatarURL())
+        .addFields(
+            {
+                name: 'User',
+                value: `${user.tag}\n\`${user.id}\``
+            },
+            {
+                name: 'Question 1',
+                value: answers[0]
+            },
+            {
+                name: 'Question 2',
+                value: answers[1]
+            },
+            {
+                name: 'Question 3',
+                value: answers[2]
+            }
+        )
+        .setTimestamp();
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`appeal_accept_${user.id}`)
+            .setLabel('Accept')
+            .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+            .setCustomId(`appeal_deny_${user.id}`)
+            .setLabel('Deny')
+            .setStyle(ButtonStyle.Danger)
+    );
+
+    await appealChannel.send({ embeds: [embed], components: [row] });
 
     await dm.send({
         embeds: [
@@ -517,21 +540,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (appealSessions.has(interaction.user.id)) {
         return interaction.reply({
             content: 'You already have an appeal in progress.',
-            ephemeral: true
-        });
+            flags: 64
+        }).catch(() => {});
     }
 
     appealSessions.set(interaction.user.id, true);
 
-    await interaction.reply({
-        content: 'Check your DMs. We will ask you a few questions.',
-        ephemeral: true
-    });
+    // FIX: reply direct binnen de DM afhandelen in een try/catch,
+    // zodat een fout hier niet meer als "interaction failed" eindigt
+    // zonder duidelijkheid, en we het altijd in de console zien.
+    try {
+        await interaction.reply({
+            content: 'We will ask you a few questions here in your DMs.',
+            flags: 64
+        });
+    } catch (err) {
+        console.error('Failed to acknowledge ban_appeal interaction:', err);
+    }
 
     try {
         await startAppealQuestions(interaction.user);
     } catch (err) {
-        console.error(err);
+        console.error('Appeal error:', err);
 
         try {
             await interaction.user.send(
@@ -541,6 +571,87 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     appealSessions.delete(interaction.user.id);
+
+});
+
+// ================= APPEAL ACCEPT / DENY =================
+// NIEUW: staff kan de appeal in het appeal-kanaal accepteren of afwijzen.
+client.on(Events.InteractionCreate, async (interaction) => {
+
+    if (!interaction.isButton()) return;
+
+    const isAccept = interaction.customId.startsWith('appeal_accept_');
+    const isDeny = interaction.customId.startsWith('appeal_deny_');
+
+    if (!isAccept && !isDeny) return;
+
+    const guild = client.guilds.cache.get(GUILD_ID);
+    if (!guild) {
+        return interaction.reply({ content: 'Guild not found.', flags: 64 }).catch(() => {});
+    }
+
+    // Alleen staff mag accepteren/afwijzen
+    const staffMember = await guild.members.fetch(interaction.user.id).catch(() => null);
+    if (!staffMember || !staffMember.roles.cache.has(STAFF_ROLE)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 }).catch(() => {});
+    }
+
+    const targetId = interaction.customId.replace(isAccept ? 'appeal_accept_' : 'appeal_deny_', '');
+
+    await interaction.deferUpdate().catch(() => {});
+
+    const targetUser = await client.users.fetch(targetId).catch(() => null);
+
+    if (isAccept) {
+
+        try {
+            await guild.members.unban(targetId, `Ban appeal accepted by ${staffMember.user.tag}`);
+        } catch (err) {
+            console.error('Unban failed:', err);
+        }
+
+        if (targetUser) {
+            await targetUser.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor('#0a0a0a')
+                        .setTitle('Ban Appeal Accepted <:Clarity:1522719037610790923>')
+                        .setDescription(
+`Your ban appeal has been **accepted** and you have been unbanned.
+
+You can rejoin the server using the invite below:
+${INVITE}`
+                        )
+                ]
+            }).catch(() => {});
+        }
+
+    } else {
+
+        if (targetUser) {
+            await targetUser.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor('#0a0a0a')
+                        .setTitle('Ban Appeal Denied <:Clarity:1522719037610790923>')
+                        .setDescription('Your ban appeal has been **denied**. The ban remains in place.')
+                ]
+            }).catch(() => {});
+        }
+    }
+
+    // Embed updaten in het appeal-kanaal met de status, knoppen verwijderen
+    const originalEmbed = interaction.message.embeds[0];
+    const updatedEmbed = originalEmbed
+        ? EmbedBuilder.from(originalEmbed)
+            .setColor(isAccept ? '#2ecc71' : '#e74c3c')
+            .addFields({
+                name: 'Status',
+                value: `${isAccept ? '✅ Accepted' : '❌ Denied'} by ${staffMember.user.tag}`
+            })
+        : new EmbedBuilder().setDescription(isAccept ? '✅ Accepted' : '❌ Denied');
+
+    await interaction.editReply({ embeds: [updatedEmbed], components: [] }).catch(() => {});
 
 });
 

@@ -44,7 +44,6 @@ const INVITE = 'https://discord.gg/ZptAeYahhc';
 // ================= STATE =================
 const pendingBuilds = new Map();
 const claimedTickets = new Map();
-const pendingAppeals = new Map();
 const appealSessions = new Collection();
 
 // ================= READY =================
@@ -468,33 +467,46 @@ Your appeal will be reviewed by our staff team.`
 
     if (!appealChannel) return;
 
-    await appealChannel.send({
-        embeds: [
-            new EmbedBuilder()
-                .setColor('#0a0a0a')
-                .setTitle('New Ban Appeal')
-                .setThumbnail(user.displayAvatarURL())
-                .addFields(
-                    {
-                        name: 'User',
-                        value: `${user.tag}\n\`${user.id}\``
-                    },
-                    {
-                        name: 'Question 1',
-                        value: answers[0]
-                    },
-                    {
-                        name: 'Question 2',
-                        value: answers[1]
-                    },
-                    {
-                        name: 'Question 3',
-                        value: answers[2]
-                    }
-                )
-                .setTimestamp()
-        ]
-    });
+const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+        .setCustomId('appeal_accept')
+        .setLabel('Accept')
+        .setStyle(ButtonStyle.Success),
+
+    new ButtonBuilder()
+        .setCustomId('appeal_deny')
+        .setLabel('Deny')
+        .setStyle(ButtonStyle.Danger)
+);
+
+await appealChannel.send({
+    embeds: [
+        new EmbedBuilder()
+            .setColor('#0a0a0a')
+            .setTitle('New Ban Appeal')
+            .setThumbnail(user.displayAvatarURL())
+            .addFields(
+                {
+                    name: 'User',
+                    value: `${user.tag}\n\`${user.id}\``
+                },
+                {
+                    name: 'Question 1',
+                    value: answers[0]
+                },
+                {
+                    name: 'Question 2',
+                    value: answers[1]
+                },
+                {
+                    name: 'Question 3',
+                    value: answers[2]
+                }
+            )
+            .setTimestamp()
+    ],
+    components: [row]
+});
 
     await dm.send({
         embeds: [
@@ -541,6 +553,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     appealSessions.delete(interaction.user.id);
+
+});
+
+// ================= APPEAL REVIEW =================
+
+client.on(Events.InteractionCreate, async (interaction) => {
+
+    if (!interaction.isButton()) return;
+
+    if (
+        interaction.customId !== 'appeal_accept' &&
+        interaction.customId !== 'appeal_deny'
+    ) return;
+
+    const accepted = interaction.customId === 'appeal_accept';
+
+    const embed = EmbedBuilder.from(interaction.message.embeds[0]);
+
+    embed.addFields({
+        name: 'Reviewed',
+        value: `${accepted ? '✅ Accepted' : '❌ Denied'} by ${interaction.user}`
+    });
+
+    const disabledRow = new ActionRowBuilder().addComponents(
+
+        ButtonBuilder.from(interaction.message.components[0].components[0])
+            .setDisabled(true),
+
+        ButtonBuilder.from(interaction.message.components[0].components[1])
+            .setDisabled(true)
+
+    );
+
+    await interaction.update({
+        embeds: [embed],
+        components: [disabledRow]
+    });
 
 });
 

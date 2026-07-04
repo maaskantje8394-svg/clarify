@@ -46,6 +46,8 @@ const LOG_CHANNEL = '1522742039912124470';
 const STAFF_ROLE = '1522712684775080056';
 const RAID_CHANNEL = '1522886310002557069';
 const APPEAL_CHANNEL = '1522893846571384862';
+const QUARANTINE_ROLE = '1522929889701924914';
+const QUARANTINE_CHANNEL = '1522930449687773275';
 const GUILD_ID = '1520173364436664390';
 const INVITE = 'https://discord.gg/ZptAeYahhc';
 
@@ -53,6 +55,7 @@ const INVITE = 'https://discord.gg/ZptAeYahhc';
 const pendingBuilds = new Map();
 const claimedTickets = new Map();
 const appealSessions = new Collection();
+const quarantinedRoles = new Map(); // userId -> array van role ids van voor de quarantaine
 
 // ================= READY =================
 client.once(Events.ClientReady, () => {
@@ -183,6 +186,44 @@ Includes **everything in Methods**, plus:
             new ButtonBuilder()
                 .setCustomId('buy_plusplus')
                 .setLabel('Clarity++')
+                .setEmoji('<:Clarity:1522719037610790923>')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        message.channel.send({ embeds: [embed], components: [row] });
+    }
+});
+
+// ================= QUARANTINE / BAN APPEAL PANEL =================
+client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot || !message.guild) return;
+
+    if (message.content === '!banp') {
+
+        const embed = new EmbedBuilder()
+            .setColor('#0a0a0a')
+            .setTitle('Ban Appeal <:Clarity:1522719037610790923>')
+            .setDescription(
+`> Placed in quarantine by mistake? Submit an appeal below and our staff team will review it.
+
+────────────────────────────────────────────────
+
+## <:U_:1522720864720916510> **How does it work?**
+
+- Click the **Appeal** button below
+- Answer 3 short questions about your situation
+- You have **5 minutes** per question to respond
+- Our staff team reviews every appeal personally
+
+────────────────────────────────────────────────
+
+**Ready? Click the button below to get started.** <:U_:1522719037610790923>`
+            );
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('quarantine_appeal')
+                .setLabel('Appeal')
                 .setEmoji('<:Clarity:1522719037610790923>')
                 .setStyle(ButtonStyle.Secondary)
         );
@@ -354,7 +395,10 @@ A staff member will help you soon.
     });
 });
 
-// ================= ANTI RAID =================
+// ================= ANTI RAID (QUARANTINE) =================
+// Zet iemand in quarantaine i.p.v. een harde ban. Zo blijft de gebruiker
+// lid van de server (mutual guild blijft bestaan), waardoor DM's en
+// knop-interacties met de bot gewoon blijven werken voor de appeal.
 
 client.on(Events.MessageCreate, async (message) => {
 
@@ -373,40 +417,51 @@ client.on(Events.MessageCreate, async (message) => {
 
     try {
 
-        // FIX: geen knop meer gebruiken hier. Discord levert component-
-        // interacties (knoppen) in een DM niet meer af zodra iemand geen
-        // lid meer is van een gedeelde server met de bot (dus na de ban).
-        // Gewone tekstberichten werken naar gebande gebruikers wel gewoon,
-        // dus de appeal wordt nu gestart door "appeal" te typen in de DM.
-        const embed = new EmbedBuilder()
-            .setColor('#0a0a0a')
-            .setTitle('You Have Been BANNED <:Clarity:1522719037610790923>')
-            .setDescription(
-`> Our automated **Anti Raid / Anti Hack system** detected suspicious activity.
+        // Huidige rollen opslaan (behalve @everyone) zodat we ze kunnen
+        // terugzetten als de appeal wordt geaccepteerd.
+        const currentRoleIds = member.roles.cache
+            .filter(r => r.id !== message.guild.id)
+            .map(r => r.id);
 
--# If you believe this was a mistake, you can submit a ban appeal by typing **appeal** below.`
-            )
-            .setImage('https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg');
+        quarantinedRoles.set(member.id, currentRoleIds);
 
-        await member.send({
-            embeds: [embed]
-        }).catch(() => {});
+        await member.roles.set([QUARANTINE_ROLE], 'Anti Raid / Anti Hack Protection - Quarantine');
 
-    } catch {}
+        console.log(`${member.user.tag} quarantined by Anti Raid`);
+
+    } catch (err) {
+        console.log(err);
+    }
 
     try {
 
-        await member.ban({
-            deleteMessageSeconds: 60,
-            reason: 'Anti Raid / Anti Hack Protection'
-        });
+        const embed = new EmbedBuilder()
+            .setColor('#0a0a0a')
+            .setTitle('You Have Been Quarantined <:Clarity:1522719037610790923>')
+            .setDescription(
+`> Our automated **Anti Raid / Anti Hack system** detected suspicious activity on your account.
 
-        console.log(`${member.user.tag} banned by Anti Raid`);
+You have been placed in **quarantine** and can only access <#${QUARANTINE_CHANNEL}> until this is resolved.
+
+-# If you believe this was a mistake, click the button below to submit an appeal.`
+            )
+            .setImage('https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg');
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('quarantine_appeal')
+                .setLabel('Appeal')
+                .setEmoji('<:Clarity:1522719037610790923>')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        await member.send({
+            embeds: [embed],
+            components: [row]
+        }).catch(() => {});
 
     } catch (err) {
-
         console.log(err);
-
     }
 
 });
@@ -526,38 +581,47 @@ Your appeal will be reviewed by our staff team.`
 
 }
 
-// ================= BAN APPEAL TRIGGER (DM TEXT) =================
-// FIX: dit was voorheen een knop (ban_appeal), maar Discord levert
-// component-interacties niet af in een DM zodra de gebruiker geen lid
-// meer is van een gedeelde server (na de ban). Daarom wordt de appeal nu
-// gestart met een gewoon tekstbericht "appeal", wat wel gewoon aankomt.
-client.on(Events.MessageCreate, async (message) => {
+// ================= QUARANTINE APPEAL BUTTON =================
+// Werkt zowel op de knop in de persoonlijke DM als op de knop van het
+// statische !banp paneel in het quarantaine-kanaal. Nu de gebruiker
+// gequarantained wordt i.p.v. gebanned, blijft de mutual guild bestaan en
+// werken knop-interacties (ook in DM) weer gewoon betrouwbaar.
+client.on(Events.InteractionCreate, async (interaction) => {
 
-    if (message.author.bot) return;
-    if (message.guild) return; // alleen in DM's
-    if (message.channel.type !== ChannelType.DM) return;
+    if (!interaction.isButton()) return;
+    if (interaction.customId !== 'quarantine_appeal') return;
 
-    if (message.content.trim().toLowerCase() !== 'appeal') return;
-
-    if (appealSessions.has(message.author.id)) {
-        return message.reply('You already have an appeal in progress.').catch(() => {});
+    if (appealSessions.has(interaction.user.id)) {
+        return interaction.reply({
+            content: 'You already have an appeal in progress. Check your DMs.',
+            flags: 64
+        }).catch(() => {});
     }
 
-    appealSessions.set(message.author.id, true);
+    appealSessions.set(interaction.user.id, true);
 
     try {
-        await startAppealQuestions(message.author);
+        await interaction.reply({
+            content: 'Check your DMs, we will ask you a few questions there.',
+            flags: 64
+        });
+    } catch (err) {
+        console.error('Failed to acknowledge quarantine_appeal interaction:', err);
+    }
+
+    try {
+        await startAppealQuestions(interaction.user);
     } catch (err) {
         console.error('Appeal error:', err);
 
         try {
-            await message.author.send(
+            await interaction.user.send(
                 'An error occurred while creating your appeal. Please try again later.'
             );
         } catch {}
     }
 
-    appealSessions.delete(message.author.id);
+    appealSessions.delete(interaction.user.id);
 
 });
 
@@ -592,9 +656,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (isAccept) {
 
         try {
-            await guild.members.unban(targetId, `Ban appeal accepted by ${staffMember.user.tag}`);
+            const targetMember = await guild.members.fetch(targetId).catch(() => null);
+
+            if (targetMember) {
+                // Oude rollen terugzetten (indien bekend), anders gewoon de
+                // quarantaine-rol verwijderen.
+                const previousRoles = quarantinedRoles.get(targetId) || [];
+                await targetMember.roles.set(previousRoles, `Ban appeal accepted by ${staffMember.user.tag}`);
+                quarantinedRoles.delete(targetId);
+            }
         } catch (err) {
-            console.error('Unban failed:', err);
+            console.error('Herstellen van rollen mislukt:', err);
         }
 
         if (targetUser) {
@@ -604,10 +676,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         .setColor('#0a0a0a')
                         .setTitle('Ban Appeal Accepted <:Clarity:1522719037610790923>')
                         .setDescription(
-`Your ban appeal has been **accepted** and you have been unbanned.
+`Your appeal has been **accepted** and your access to the server has been restored.
 
-You can rejoin the server using the invite below:
-${INVITE}`
+Welcome back! <:Clarity:1522719037610790923>`
                         )
                 ]
             }).catch(() => {});
@@ -621,7 +692,7 @@ ${INVITE}`
                     new EmbedBuilder()
                         .setColor('#0a0a0a')
                         .setTitle('Ban Appeal Denied <:Clarity:1522719037610790923>')
-                        .setDescription('Your ban appeal has been **denied**. The ban remains in place.')
+                        .setDescription('Your appeal has been **denied**. You will remain in quarantine.')
                 ]
             }).catch(() => {});
         }

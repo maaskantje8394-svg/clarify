@@ -402,147 +402,70 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
 });
-// ================= APPEAL QUESTIONS =================
 
-async function startAppealQuestions(user) {
-
-    const dm = await user.createDM();
-
-    const questions = [
-        'Why do you believe your ban should be removed?',
-        'What happened before you were banned?',
-        'Is there anything else you would like the staff team to know?'
-    ];
-
-    const answers = [];
-
-    await dm.send({
-        embeds: [
-            new EmbedBuilder()
-                .setColor('#0a0a0a')
-                .setTitle('Ban Appeal')
-                .setDescription(
-`Please answer the following questions.
-
-You have **5 minutes** per question.
-
-Your appeal will be reviewed by our staff team.`
-                )
-        ]
-    });
-
-    for (let i = 0; i < questions.length; i++) {
-
-        await dm.send({
-            embeds: [
-                new EmbedBuilder()
-                    .setColor('#0a0a0a')
-                    .setTitle(`Question ${i + 1}/3`)
-                    .setDescription(questions[i])
-            ]
-        });
-
-        const collected = await dm.awaitMessages({
-            filter: m => m.author.id === user.id,
-            max: 1,
-            time: 300000
-        });
-
-        if (!collected.size) {
-            await dm.send({
-                embeds: [
-                    new EmbedBuilder()
-                        .setColor('#0a0a0a')
-                        .setDescription('Your appeal has expired because you did not answer in time.')
-                ]
-            });
-
-            return;
-        }
-
-        answers.push(collected.first().content);
-    }
-
-    const appealChannel = client.channels.cache.get(APPEAL_CHANNEL);
-
-    if (!appealChannel) return;
-
-const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-        .setCustomId('appeal_accept')
-        .setLabel('Accept')
-        .setStyle(ButtonStyle.Success),
-    
 // ================= BAN APPEAL BUTTON =================
 
 client.on(Events.InteractionCreate, async (interaction) => {
 
     if (!interaction.isButton()) return;
-    if (interaction.customId !== 'ban_appeal') return;
 
-    if (appealSessions.has(interaction.user.id)) {
-        return interaction.reply({
-            content: 'You already have an appeal in progress.',
-            ephemeral: true
-        });
-    }
+    // ================= OPEN APPEAL =================
+    if (interaction.customId === 'ban_appeal') {
 
-    appealSessions.set(interaction.user.id, true);
+        if (appealSessions.has(interaction.user.id)) {
+            return interaction.reply({
+                content: 'You already have an appeal in progress.',
+                ephemeral: true
+            });
+        }
 
-    try {
-
-        await interaction.deferReply({ ephemeral: true });
-
-        await interaction.editReply({
-            content: 'Check your DMs. We will ask you a few questions.'
-        });
-
-        await startAppealQuestions(interaction.user);
-
-    } catch (err) {
-
-        console.error(err);
+        appealSessions.set(interaction.user.id, true);
 
         try {
-            await interaction.user.send(
-                'An error occurred while creating your appeal. Please try again later or contact <@1189931854657224858>.'
-            );
-        } catch {}
 
-    } finally {
+            await interaction.deferReply({ ephemeral: true });
 
-        appealSessions.delete(interaction.user.id);
+            await interaction.editReply({
+                content: 'Check your DMs. We will ask you a few questions.'
+            });
 
+            await startAppealQuestions(interaction.user);
+
+        } catch (err) {
+            console.error(err);
+
+            try {
+                await interaction.user.send(
+                    'An error occurred while creating your appeal. Please try again later or contact <@1189931854657224858>.'
+                );
+            } catch {}
+        } finally {
+            appealSessions.delete(interaction.user.id);
+        }
     }
 
-});
+    // ================= APPEAL REVIEW =================
+    if (interaction.customId === 'appeal_accept' || interaction.customId === 'appeal_deny') {
 
-// ================= APPEAL REVIEW =================
+        const accepted = interaction.customId === 'appeal_accept';
 
-    const accepted = interaction.customId === 'appeal_accept';
+        const embed = EmbedBuilder.from(interaction.message.embeds[0]);
 
-    const embed = EmbedBuilder.from(interaction.message.embeds[0]);
+        embed.addFields({
+            name: 'Reviewed',
+            value: `${accepted ? '✅ Accepted' : '❌ Denied'} by ${interaction.user}`
+        });
 
-    embed.addFields({
-        name: 'Reviewed',
-        value: `${accepted ? '✅ Accepted' : '❌ Denied'} by ${interaction.user}`
-    });
+        const disabledRow = new ActionRowBuilder().addComponents(
+            ButtonBuilder.from(interaction.message.components[0].components[0]).setDisabled(true),
+            ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
+        );
 
-    const disabledRow = new ActionRowBuilder().addComponents(
-
-        ButtonBuilder.from(interaction.message.components[0].components[0])
-            .setDisabled(true),
-
-        ButtonBuilder.from(interaction.message.components[0].components[1])
-            .setDisabled(true)
-
-    );
-
-    await interaction.update({
-        embeds: [embed],
-        components: [disabledRow]
-    });
-
+        await interaction.update({
+            embeds: [embed],
+            components: [disabledRow]
+        });
+    }
 });
 
 // ================= SERVER =================

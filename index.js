@@ -535,13 +535,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     appealSessions.set(interaction.user.id, true);
 
-    await interaction.reply({
-        content: 'Check your DMs. We will ask you a few questions.',
-        ephemeral: true
-    });
+await interaction.deferReply({ ephemeral: true });
 
-    try {
-        await startAppealQuestions(interaction.user);
+await interaction.editReply({
+    content: 'We will ask you a few questions.'
+});
+
+// Start de vragen zonder erop te wachten
+startAppealQuestions(interaction.user).catch(console.error);
     } catch (err) {
         console.error(err);
 

@@ -59,6 +59,19 @@ client.once(Events.ClientReady, () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
+// ================= DEBUG: RAW INTERACTION LOGGER =================
+// Tijdelijk, om te zien of interacties uberhaupt binnenkomen.
+client.on(Events.InteractionCreate, (interaction) => {
+    console.log('[RAW INTERACTION]', {
+        type: interaction.type,
+        isButton: interaction.isButton?.(),
+        customId: interaction.customId,
+        channelType: interaction.channel?.type,
+        guildId: interaction.guildId,
+        user: interaction.user?.tag
+    });
+});
+
 // ================= WELCOME =================
 client.on(Events.GuildMemberAdd, async (member) => {
     const channel = member.guild.channels.cache.get(WELCOME_CHANNEL);

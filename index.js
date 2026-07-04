@@ -472,58 +472,12 @@ const row = new ActionRowBuilder().addComponents(
         .setCustomId('appeal_accept')
         .setLabel('Accept')
         .setStyle(ButtonStyle.Success),
-
-    new ButtonBuilder()
-        .setCustomId('appeal_deny')
-        .setLabel('Deny')
-        .setStyle(ButtonStyle.Danger)
-);
-
-await appealChannel.send({
-    embeds: [
-        new EmbedBuilder()
-            .setColor('#0a0a0a')
-            .setTitle('New Ban Appeal')
-            .setThumbnail(user.displayAvatarURL())
-            .addFields(
-                {
-                    name: 'User',
-                    value: `${user.tag}\n\`${user.id}\``
-                },
-                {
-                    name: 'Question 1',
-                    value: answers[0]
-                },
-                {
-                    name: 'Question 2',
-                    value: answers[1]
-                },
-                {
-                    name: 'Question 3',
-                    value: answers[2]
-                }
-            )
-            .setTimestamp()
-    ],
-    components: [row]
-});
-
-    await dm.send({
-        embeds: [
-            new EmbedBuilder()
-                .setColor('#0a0a0a')
-                .setDescription('✅ Your appeal has been submitted successfully.')
-        ]
-    });
-
-}
-
+    
 // ================= BAN APPEAL BUTTON =================
 
 client.on(Events.InteractionCreate, async (interaction) => {
 
     if (!interaction.isButton()) return;
-
     if (interaction.customId !== 'ban_appeal') return;
 
     if (appealSessions.has(interaction.user.id)) {
@@ -535,38 +489,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     appealSessions.set(interaction.user.id, true);
 
-await interaction.deferReply({ ephemeral: true });
+    try {
 
-await interaction.editReply({
-    content: 'We will ask you a few questions.'
-});
+        await interaction.deferReply({ ephemeral: true });
 
-// Start de vragen zonder erop te wachten
-startAppealQuestions(interaction.user).catch(console.error);
+        await interaction.editReply({
+            content: 'Check your DMs. We will ask you a few questions.'
+        });
+
+        await startAppealQuestions(interaction.user);
+
     } catch (err) {
+
         console.error(err);
 
         try {
             await interaction.user.send(
-                'An error occurred while creating your appeal. Please try again later.'
+                'An error occurred while creating your appeal. Please try again later or contact <@1189931854657224858>.'
             );
         } catch {}
-    }
 
-    appealSessions.delete(interaction.user.id);
+    } finally {
+
+        appealSessions.delete(interaction.user.id);
+
+    }
 
 });
 
 // ================= APPEAL REVIEW =================
-
-client.on(Events.InteractionCreate, async (interaction) => {
-
-    if (!interaction.isButton()) return;
-
-    if (
-        interaction.customId !== 'appeal_accept' &&
-        interaction.customId !== 'appeal_deny'
-    ) return;
 
     const accepted = interaction.customId === 'appeal_accept';
 

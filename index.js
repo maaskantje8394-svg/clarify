@@ -59,18 +59,6 @@ client.once(Events.ClientReady, () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// ================= DEBUG: RAW INTERACTION LOGGER =================
-// Tijdelijk, om te zien of interacties uberhaupt binnenkomen.
-client.on(Events.InteractionCreate, (interaction) => {
-    console.log('[RAW INTERACTION]', {
-        type: interaction.type,
-        isButton: interaction.isButton?.(),
-        customId: interaction.customId,
-        channelType: interaction.channel?.type,
-        guildId: interaction.guildId,
-        user: interaction.user?.tag
-    });
-});
 
 // ================= WELCOME =================
 client.on(Events.GuildMemberAdd, async (member) => {
@@ -385,27 +373,23 @@ client.on(Events.MessageCreate, async (message) => {
 
     try {
 
+        // FIX: geen knop meer gebruiken hier. Discord levert component-
+        // interacties (knoppen) in een DM niet meer af zodra iemand geen
+        // lid meer is van een gedeelde server met de bot (dus na de ban).
+        // Gewone tekstberichten werken naar gebande gebruikers wel gewoon,
+        // dus de appeal wordt nu gestart door "appeal" te typen in de DM.
         const embed = new EmbedBuilder()
             .setColor('#0a0a0a')
             .setTitle('You Have Been BANNED <:Clarity:1522719037610790923>')
             .setDescription(
 `> Our automated **Anti Raid / Anti Hack system** detected suspicious activity.
 
--# If you believe this was a mistake, you can submit a ban **appeal below.**`
+-# If you believe this was a mistake, you can submit a ban appeal by typing **appeal** below.`
             )
             .setImage('https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg');
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('ban_appeal')
-                .setLabel('Ban Appeal')
-                .setEmoji('<:Clarity:1522719037610790923>')
-                .setStyle(ButtonStyle.Secondary)
-        );
-
         await member.send({
-            embeds: [embed],
-            components: [row]
+            embeds: [embed]
         }).catch(() => {});
 
     } catch {}
@@ -542,48 +526,38 @@ Your appeal will be reviewed by our staff team.`
 
 }
 
-// ================= BAN APPEAL BUTTON =================
+// ================= BAN APPEAL TRIGGER (DM TEXT) =================
+// FIX: dit was voorheen een knop (ban_appeal), maar Discord levert
+// component-interacties niet af in een DM zodra de gebruiker geen lid
+// meer is van een gedeelde server (na de ban). Daarom wordt de appeal nu
+// gestart met een gewoon tekstbericht "appeal", wat wel gewoon aankomt.
+client.on(Events.MessageCreate, async (message) => {
 
-client.on(Events.InteractionCreate, async (interaction) => {
+    if (message.author.bot) return;
+    if (message.guild) return; // alleen in DM's
+    if (message.channel.type !== ChannelType.DM) return;
 
-    if (!interaction.isButton()) return;
+    if (message.content.trim().toLowerCase() !== 'appeal') return;
 
-    if (interaction.customId !== 'ban_appeal') return;
-
-    if (appealSessions.has(interaction.user.id)) {
-        return interaction.reply({
-            content: 'You already have an appeal in progress.',
-            flags: 64
-        }).catch(() => {});
+    if (appealSessions.has(message.author.id)) {
+        return message.reply('You already have an appeal in progress.').catch(() => {});
     }
 
-    appealSessions.set(interaction.user.id, true);
-
-    // FIX: reply direct binnen de DM afhandelen in een try/catch,
-    // zodat een fout hier niet meer als "interaction failed" eindigt
-    // zonder duidelijkheid, en we het altijd in de console zien.
-    try {
-        await interaction.reply({
-            content: 'We will ask you a few questions here in your DMs.',
-            flags: 64
-        });
-    } catch (err) {
-        console.error('Failed to acknowledge ban_appeal interaction:', err);
-    }
+    appealSessions.set(message.author.id, true);
 
     try {
-        await startAppealQuestions(interaction.user);
+        await startAppealQuestions(message.author);
     } catch (err) {
         console.error('Appeal error:', err);
 
         try {
-            await interaction.user.send(
+            await message.author.send(
                 'An error occurred while creating your appeal. Please try again later.'
             );
         } catch {}
     }
 
-    appealSessions.delete(interaction.user.id);
+    appealSessions.delete(message.author.id);
 
 });
 

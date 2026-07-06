@@ -13,7 +13,8 @@ import {
     ChannelType,
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    StringSelectMenuBuilder
 } from 'discord.js';
 
 // ================= SAFE FOLDER =================
@@ -48,6 +49,10 @@ const RAID_CHANNEL = '1522886310002557069';
 const APPEAL_CHANNEL = '1522893846571384862';
 const QUARANTINE_ROLE = '1522929889701924914';
 const QUARANTINE_CHANNEL = '1522930449687773275';
+const GENERAL_CATEGORY = '1523800565178433699';
+const METHOD_CATEGORY = '1523800765116842126';
+const PARTNER_CATEGORY = '1523800633604575363';
+const PARTNER_ROLE = '1523801588584546405';
 const GUILD_ID = '1520173364436664390';
 const INVITE = 'https://discord.gg/ZptAeYahhc';
 
@@ -393,6 +398,287 @@ A staff member will help you soon.
         content: `Ticket created: ${channel}`,
         flags: 64
     });
+});
+
+// ================= SUPPORT TICKETS (DROPDOWN) =================
+// Volledig los systeem van het bestaande !panel ticket-systeem hierboven.
+
+function isNewTicketChannel(channel) {
+    return [GENERAL_CATEGORY, METHOD_CATEGORY, PARTNER_CATEGORY].includes(channel.parentId);
+}
+
+function isTicketStaff(channel, member) {
+    if (member.roles.cache.has(STAFF_ROLE)) return true;
+    if (channel.parentId === PARTNER_CATEGORY && member.roles.cache.has(PARTNER_ROLE)) return true;
+    return false;
+}
+
+async function generateAndSendTranscript(channel, guild, closedByTag) {
+
+    const messages = await channel.messages.fetch();
+    const sorted = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+    let transcript = `Transcript — ${channel.name}\n`;
+    transcript += `──────────────────────────────────────────────────\n\n`;
+
+    sorted.forEach(m => {
+
+        if (m.author.bot) {
+            transcript += `${m.author.username}: ${m.content || ''}\n`;
+
+            if (m.embeds.length > 0) {
+                m.embeds.forEach(embed => {
+                    transcript += `  [Embed] ${embed.title || 'No Title'}\n`;
+                    if (embed.description) transcript += `  ${embed.description}\n`;
+                });
+            }
+
+            if (m.attachments.size > 0) {
+                m.attachments.forEach(att => {
+                    transcript += `  [Attachment] ${att.name} — ${att.url}\n`;
+                });
+            }
+
+            transcript += `\n`;
+        } else {
+            transcript += `${m.author.tag}: ${m.content || ''}\n`;
+
+            if (m.attachments.size > 0) {
+                m.attachments.forEach(att => {
+                    transcript += `  [Attachment] ${att.name} — ${att.url}\n`;
+                });
+            }
+
+            transcript += `\n`;
+        }
+    });
+
+    const filePath = path.join('./transcripts', `${channel.id}.txt`);
+    fs.writeFileSync(filePath, transcript);
+
+    const log = guild.channels.cache.get(LOG_CHANNEL);
+
+    if (log) {
+        log.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setColor('#0a0a0a')
+                    .setTitle('Ticket Closed')
+                    .setDescription(
+`Channel: ${channel.name}
+Closed by: ${closedByTag}
+Claimed: ${claimedTickets.get(channel.id) || 'None'}
+Time: <t:${Math.floor(Date.now()/1000)}:F>`
+                    )
+            ],
+            files: [filePath]
+        });
+    }
+
+    setTimeout(() => channel.delete().catch(() => {}), 3000);
+}
+
+// ---------- Paneel: !tickets ----------
+client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot || !message.guild) return;
+
+    if (message.content === '!tickets') {
+
+        const embed = new EmbedBuilder()
+            .setColor('#0a0a0a')
+            .setTitle('Support Tickets <:Clarity:1522719037610790923>')
+            .setThumbnail('https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg')
+            .setDescription(
+`> Need help? Select the category below that fits your request best.
+
+────────────────────────────────────────────────
+
+## <:U_:1522720864720916510> **General Questions**
+General help, questions, or server issues.
+
+## <:U_:1522720864720916510> **Method Questions**
+Questions or support about a method you purchased.
+
+## <:U_:1522720864720916510> **Partner Tickets**
+Partnership requests or collaborations.
+
+────────────────────────────────────────────────
+
+**Select an option below to open a ticket.** <:U_:1522719037610790923>`
+            );
+
+        const row = new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId('ticket_select')
+                .setPlaceholder('Select a ticket category')
+                .addOptions(
+                    {
+                        label: 'General Questions',
+                        description: 'General help, questions, or server issues.',
+                        value: 'ticket_general',
+                        emoji: '🛠️'
+                    },
+                    {
+                        label: 'Method Questions',
+                        description: 'Questions or support about a purchased method.',
+                        value: 'ticket_method',
+                        emoji: '📘'
+                    },
+                    {
+                        label: 'Partner Tickets',
+                        description: 'Partnership requests or collaborations.',
+                        value: 'ticket_partner',
+                        emoji: '🤝'
+                    }
+                )
+        );
+
+        message.channel.send({ embeds: [embed], components: [row] });
+    }
+});
+
+// ---------- Dropdown selectie: ticket aanmaken ----------
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isStringSelectMenu()) return;
+    if (interaction.customId !== 'ticket_select') return;
+
+    const guild = interaction.guild;
+    const member = interaction.member;
+    const choice = interaction.values[0];
+
+    let category, title, prefix, mentionRoles;
+
+    if (choice === 'ticket_general') {
+        category = GENERAL_CATEGORY;
+        title = 'General Questions';
+        prefix = 'general';
+        mentionRoles = [STAFF_ROLE];
+    } else if (choice === 'ticket_method') {
+        category = METHOD_CATEGORY;
+        title = 'Method Questions';
+        prefix = 'method';
+        mentionRoles = [STAFF_ROLE];
+    } else if (choice === 'ticket_partner') {
+        category = PARTNER_CATEGORY;
+        title = 'Partner Tickets';
+        prefix = 'partner';
+        mentionRoles = [STAFF_ROLE, PARTNER_ROLE];
+    } else {
+        return;
+    }
+
+    const overwrites = [
+        { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: member.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+    ];
+
+    mentionRoles.forEach(roleId => {
+        overwrites.push({ id: roleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] });
+    });
+
+    const channel = await guild.channels.create({
+        name: `${prefix}-${member.user.username}`,
+        type: ChannelType.GuildText,
+        parent: category,
+        permissionOverwrites: overwrites
+    });
+
+    const roleMentions = mentionRoles.map(r => `<@&${r}>`).join(' ');
+
+    const embed = new EmbedBuilder()
+        .setColor('#0a0a0a')
+        .setDescription(
+`<:Clarity:1522719037610790923> ${title}
+
+User: ${member}
+
+A staff member will help you soon.
+
+${roleMentions}`
+        );
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('newticket_close')
+            .setLabel('Close')
+            .setStyle(ButtonStyle.Danger),
+
+        new ButtonBuilder()
+            .setCustomId('newticket_claim')
+            .setLabel('Claim')
+            .setStyle(ButtonStyle.Secondary)
+    );
+
+    await channel.send({
+        content: roleMentions,
+        embeds: [embed],
+        components: [row]
+    });
+
+    return interaction.reply({
+        content: `Ticket created: ${channel}`,
+        flags: 64
+    });
+});
+
+// ---------- Claim / Close knoppen ----------
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isButton()) return;
+    if (interaction.customId !== 'newticket_close' && interaction.customId !== 'newticket_claim') return;
+
+    const member = interaction.member;
+
+    if (!isTicketStaff(interaction.channel, member)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 }).catch(() => {});
+    }
+
+    if (interaction.customId === 'newticket_claim') {
+        claimedTickets.set(interaction.channel.id, member.user.tag);
+        return interaction.reply({ content: `Claimed by ${member}`, flags: 64 });
+    }
+
+    // newticket_close
+    await interaction.reply({ content: 'Closing ticket...', flags: 64 });
+    await generateAndSendTranscript(interaction.channel, interaction.guild, member.user.tag);
+});
+
+// ---------- !rename ----------
+client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot || !message.guild) return;
+    if (!message.content.startsWith('!rename')) return;
+    if (!isNewTicketChannel(message.channel)) return;
+
+    if (!isTicketStaff(message.channel, message.member)) {
+        return message.reply('No permission.');
+    }
+
+    const newName = message.content.slice('!rename'.length).trim();
+    if (!newName) return message.reply('Use: `!rename new-name`');
+
+    const sanitized = newName
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '')
+        .slice(0, 90);
+
+    if (!sanitized) return message.reply('Invalid name.');
+
+    await message.channel.setName(sanitized).catch(() => {});
+    return message.reply(`Channel renamed to \`${sanitized}\`.`);
+});
+
+// ---------- !closerq ----------
+client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot || !message.guild) return;
+    if (message.content !== '!closerq') return;
+    if (!isNewTicketChannel(message.channel)) return;
+
+    if (!isTicketStaff(message.channel, message.member)) {
+        return message.reply('No permission.');
+    }
+
+    await message.reply('Closing ticket...');
+    await generateAndSendTranscript(message.channel, message.guild, message.author.tag);
 });
 
 // ================= ANTI RAID (QUARANTINE) =================

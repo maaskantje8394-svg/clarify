@@ -14,7 +14,11 @@ import {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    StringSelectMenuBuilder
+    StringSelectMenuBuilder,
+    REST,
+    Routes,
+    SlashCommandBuilder,
+    PermissionFlagsBits
 } from 'discord.js';
 
 // ================= SAFE FOLDER =================
@@ -57,14 +61,85 @@ const GUILD_ID = '1520173364436664390';
 const INVITE = 'https://discord.gg/ZptAeYahhc';
 
 // ================= STATE =================
-const pendingBuilds = new Map();
 const claimedTickets = new Map();
 const appealSessions = new Collection();
 const quarantinedRoles = new Map(); // userId -> array van role ids van voor de quarantaine
+const ticketOwners = new Map(); // channelId -> userId, om transcript ook naar de maker te sturen
+
+// ================= SLASH COMMANDS REGISTREREN =================
+// Draait automatisch bij elke opstart van de bot. Hierdoor is er geen
+// apart script of Shell-toegang nodig (die heb je niet op Render's
+// gratis plan) om de slash commands bij Discord te registreren.
+const slashCommands = [
+
+    new SlashCommandBuilder()
+        .setName('build')
+        .setDescription('Stuur een custom embed naar een gekozen kanaal')
+        .addChannelOption(option =>
+            option.setName('channel')
+                .setDescription('Het kanaal waar de embed naartoe moet')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('message')
+                .setDescription('De inhoud van de embed (mag meerdere regels zijn)')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('title')
+                .setDescription('Optionele titel voor de embed')
+                .setRequired(false))
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('panel')
+        .setDescription('Post het Clarity+ / Clarity++ verkooppaneel in dit kanaal')
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('banp')
+        .setDescription('Post het ban appeal paneel in dit kanaal (voor het quarantaine-kanaal)')
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('tickets')
+        .setDescription('Post het support ticket paneel (dropdown) in dit kanaal')
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('rename')
+        .setDescription('Hernoem het huidige ticket-kanaal')
+        .addStringOption(option =>
+            option.setName('name')
+                .setDescription('De nieuwe naam voor het kanaal')
+                .setRequired(true))
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('closerq')
+        .setDescription('Sluit het huidige ticket en stuur een transcript')
+        .toJSON()
+
+];
+
+async function registerSlashCommands() {
+    try {
+        const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+
+        await rest.put(
+            Routes.applicationGuildCommands(process.env.CLIENT_ID, GUILD_ID),
+            { body: slashCommands }
+        );
+
+        console.log(`✅ ${slashCommands.length} slash commands geregistreerd.`);
+    } catch (err) {
+        console.error('❌ Slash commands registreren mislukt:', err);
+    }
+}
 
 // ================= READY =================
-client.once(Events.ClientReady, () => {
+client.once(Events.ClientReady, async () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
+    await registerSlashCommands();
 });
 
 
@@ -86,60 +161,37 @@ client.on(Events.GuildMemberAdd, async (member) => {
 });
 
 // ================= BUILD =================
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot || !message.guild) return;
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'build') return;
 
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
-
-    if (message.content.startsWith('!build')) {
-        const channel =
-            message.mentions.channels.first() ||
-            message.guild.channels.cache.get(message.content.split(' ')[1]);
-
-        if (!channel) return message.reply('Use: `!build #channel`');
-
-        pendingBuilds.set(message.author.id, channel.id);
-        return message.reply('Send embed content or type cancel.');
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 });
     }
 
-    if (!pendingBuilds.has(message.author.id)) return;
-
-    if (message.content.toLowerCase() === 'cancel') {
-        pendingBuilds.delete(message.author.id);
-        return message.reply('Cancelled.');
-    }
-
-    const channelId = pendingBuilds.get(message.author.id);
-    pendingBuilds.delete(message.author.id);
-
-    const lines = message.content.split('\n');
-
-    let title = null;
-    if (lines[0].startsWith('# ')) {
-        title = lines.shift().slice(2);
-    }
+    const channel = interaction.options.getChannel('channel');
+    const content = interaction.options.getString('message');
+    const title = interaction.options.getString('title');
 
     const embed = new EmbedBuilder().setColor('#0a0a0a');
 
     if (title) embed.setTitle(title);
-    embed.setDescription(lines.join('\n'));
+    embed.setDescription(content);
 
-    const target = message.guild.channels.cache.get(channelId);
-    if (target) target.send({ embeds: [embed] });
+    await channel.send({ embeds: [embed] });
 
-    message.reply('Embed sent.');
+    return interaction.reply({ content: `Embed sent to ${channel}.`, flags: 64 });
 });
 
 // ================= PANEL =================
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot) return;
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'panel') return;
 
-    if (message.content === '!panel') {
-
-        const embed = new EmbedBuilder()
-            .setColor('#0a0a0a')
-            .setTitle('Clarity+ & Clarity++ <:Clarity:1522719037610790923>')
-            .setDescription(
+    const embed = new EmbedBuilder()
+        .setColor('#0a0a0a')
+        .setTitle('Clarity+ & Clarity++ <:Clarity:1522719037610790923>')
+        .setDescription(
 `> Unlock exclusive TikTok methods, editing resources, and premium community perks.
 
 ────────────────────────────────────────────────
@@ -179,36 +231,35 @@ Includes **everything in Methods**, plus:
 ────────────────────────────────────────────────
 
 **Interested? Open a ticket in <#1522715255036313662> and choose your preferred payment method.** <:U_:1522719037610790923>`
-            );
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('buy_plus')
-                .setLabel('Clarity+')
-                .setEmoji('<:Clarity:1522719037610790923>')
-                .setStyle(ButtonStyle.Secondary),
-
-            new ButtonBuilder()
-                .setCustomId('buy_plusplus')
-                .setLabel('Clarity++')
-                .setEmoji('<:Clarity:1522719037610790923>')
-                .setStyle(ButtonStyle.Secondary)
         );
 
-        message.channel.send({ embeds: [embed], components: [row] });
-    }
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('buy_plus')
+            .setLabel('Clarity+')
+            .setEmoji('<:Clarity:1522719037610790923>')
+            .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+            .setCustomId('buy_plusplus')
+            .setLabel('Clarity++')
+            .setEmoji('<:Clarity:1522719037610790923>')
+            .setStyle(ButtonStyle.Secondary)
+    );
+
+    await interaction.channel.send({ embeds: [embed], components: [row] });
+    return interaction.reply({ content: 'Panel posted.', flags: 64 });
 });
 
 // ================= QUARANTINE / BAN APPEAL PANEL =================
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot || !message.guild) return;
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'banp') return;
 
-    if (message.content === '!banp') {
-
-        const embed = new EmbedBuilder()
-            .setColor('#0a0a0a')
-            .setTitle('Ban Appeal <:Clarity:1522719037610790923>')
-            .setDescription(
+    const embed = new EmbedBuilder()
+        .setColor('#0a0a0a')
+        .setTitle('Ban Appeal <:Clarity:1522719037610790923>')
+        .setDescription(
 `> Placed in quarantine by mistake? Submit an appeal below and our staff team will review it.
 
 ────────────────────────────────────────────────
@@ -223,18 +274,18 @@ client.on(Events.MessageCreate, async (message) => {
 ────────────────────────────────────────────────
 
 **Ready? Click the button below to get started.** <:U_:1522719037610790923>`
-            );
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('quarantine_appeal')
-                .setLabel('Appeal')
-                .setEmoji('<:Clarity:1522719037610790923>')
-                .setStyle(ButtonStyle.Secondary)
         );
 
-        message.channel.send({ embeds: [embed], components: [row] });
-    }
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('quarantine_appeal')
+            .setLabel('Appeal')
+            .setEmoji('<:Clarity:1522719037610790923>')
+            .setStyle(ButtonStyle.Secondary)
+    );
+
+    await interaction.channel.send({ embeds: [embed], components: [row] });
+    return interaction.reply({ content: 'Panel posted.', flags: 64 });
 });
 
 // ================= TICKETS =================
@@ -475,66 +526,85 @@ Time: <t:${Math.floor(Date.now()/1000)}:F>`
         });
     }
 
+    // Transcript ook naar de ticket-maker sturen
+    const ownerId = ticketOwners.get(channel.id);
+    if (ownerId) {
+        const ownerUser = await client.users.fetch(ownerId).catch(() => null);
+
+        if (ownerUser) {
+            await ownerUser.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor('#0a0a0a')
+                        .setTitle('Ticket Closed <:Clarity:1522719037610790923>')
+                        .setDescription(`Your ticket **${channel.name}** has been closed. A transcript of your conversation is attached below.`)
+                ],
+                files: [filePath]
+            }).catch(() => {});
+        }
+
+        ticketOwners.delete(channel.id);
+    }
+
     setTimeout(() => channel.delete().catch(() => {}), 3000);
 }
 
-// ---------- Paneel: !tickets ----------
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot || !message.guild) return;
+// ---------- Paneel: /tickets ----------
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'tickets') return;
 
-    if (message.content === '!tickets') {
-
-        const embed = new EmbedBuilder()
-            .setColor('#0a0a0a')
-            .setTitle('Support Tickets <:Clarity:1522719037610790923>')
-            .setThumbnail('https://cdn.discordapp.com/attachments/1518352163603091577/1522728390652723300/Bannder.jpg')
-            .setDescription(
+    const embed = new EmbedBuilder()
+        .setColor('#0a0a0a')
+        .setTitle('Support Tickets <:Clarity:1522719037610790923>')
+        .setImage('https://cdn.discordapp.com/attachments/1518352163603091577/1522946476878200882/Bannder.jpg')
+        .setDescription(
 `> Need help? Select the category below that fits your request best.
 
-────────────────────────────────────────────────
+────────────────────────────────────────
 
-## <:U_:1522720864720916510> **General Questions**
-General help, questions, or server issues.
+\`\`General Questions:\`\`
+- General help, questions, or server issues.
 
-## <:U_:1522720864720916510> **Method Questions**
-Questions or support about a method you purchased.
+\`\`Method Questions:\`\`
+- Questions or support about a method you purchased.
 
-## <:U_:1522720864720916510> **Partner Tickets**
-Partnership requests or collaborations.
+\`\`Partnership:\`\`
+- Partnership requests or collaborations.
 
-────────────────────────────────────────────────
+────────────────────────────────────────
 
-**Select an option below to open a ticket.** <:U_:1522719037610790923>`
-            );
-
-        const row = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-                .setCustomId('ticket_select')
-                .setPlaceholder('Select a ticket category')
-                .addOptions(
-                    {
-                        label: 'General Questions',
-                        description: 'General help, questions, or server issues.',
-                        value: 'ticket_general',
-                        emoji: '🛠️'
-                    },
-                    {
-                        label: 'Method Questions',
-                        description: 'Questions or support about a purchased method.',
-                        value: 'ticket_method',
-                        emoji: '📘'
-                    },
-                    {
-                        label: 'Partner Tickets',
-                        description: 'Partnership requests or collaborations.',
-                        value: 'ticket_partner',
-                        emoji: '🤝'
-                    }
-                )
+**Select an option below to open a ticket** <:Clarity:1522719037610790923>`
         );
 
-        message.channel.send({ embeds: [embed], components: [row] });
-    }
+    const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('ticket_select')
+            .setPlaceholder('Select a ticket category')
+            .addOptions(
+                {
+                    label: 'General Questions',
+                    description: 'General help, questions, or server issues.',
+                    value: 'ticket_general',
+                    emoji: '🛠️'
+                },
+                {
+                    label: 'Method Questions',
+                    description: 'Questions or support about a purchased method.',
+                    value: 'ticket_method',
+                    emoji: '📘'
+                },
+                {
+                    label: 'Partner Tickets',
+                    description: 'Partnership requests or collaborations.',
+                    value: 'ticket_partner',
+                    emoji: '🤝'
+                }
+            )
+    );
+
+    await interaction.channel.send({ embeds: [embed], components: [row] });
+    return interaction.reply({ content: 'Panel posted.', flags: 64 });
 });
 
 // ---------- Dropdown selectie: ticket aanmaken ----------
@@ -582,6 +652,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         parent: category,
         permissionOverwrites: overwrites
     });
+
+    ticketOwners.set(channel.id, member.id);
 
     const roleMentions = mentionRoles.map(r => `<@&${r}>`).join(' ');
 
@@ -642,18 +714,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await generateAndSendTranscript(interaction.channel, interaction.guild, member.user.tag);
 });
 
-// ---------- !rename ----------
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot || !message.guild) return;
-    if (!message.content.startsWith('!rename')) return;
-    if (!isNewTicketChannel(message.channel)) return;
-
-    if (!isTicketStaff(message.channel, message.member)) {
-        return message.reply('No permission.');
+// ---------- /rename ----------
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'rename') return;
+    if (!isNewTicketChannel(interaction.channel)) {
+        return interaction.reply({ content: 'This command only works in ticket channels.', flags: 64 });
     }
 
-    const newName = message.content.slice('!rename'.length).trim();
-    if (!newName) return message.reply('Use: `!rename new-name`');
+    if (!isTicketStaff(interaction.channel, interaction.member)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 });
+    }
+
+    const newName = interaction.options.getString('name');
 
     const sanitized = newName
         .toLowerCase()
@@ -661,24 +734,26 @@ client.on(Events.MessageCreate, async (message) => {
         .replace(/[^a-z0-9-]/g, '')
         .slice(0, 90);
 
-    if (!sanitized) return message.reply('Invalid name.');
+    if (!sanitized) return interaction.reply({ content: 'Invalid name.', flags: 64 });
 
-    await message.channel.setName(sanitized).catch(() => {});
-    return message.reply(`Channel renamed to \`${sanitized}\`.`);
+    await interaction.channel.setName(sanitized).catch(() => {});
+    return interaction.reply({ content: `Channel renamed to \`${sanitized}\`.`, flags: 64 });
 });
 
-// ---------- !closerq ----------
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot || !message.guild) return;
-    if (message.content !== '!closerq') return;
-    if (!isNewTicketChannel(message.channel)) return;
-
-    if (!isTicketStaff(message.channel, message.member)) {
-        return message.reply('No permission.');
+// ---------- /closerq ----------
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'closerq') return;
+    if (!isNewTicketChannel(interaction.channel)) {
+        return interaction.reply({ content: 'This command only works in ticket channels.', flags: 64 });
     }
 
-    await message.reply('Closing ticket...');
-    await generateAndSendTranscript(message.channel, message.guild, message.author.tag);
+    if (!isTicketStaff(interaction.channel, interaction.member)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 });
+    }
+
+    await interaction.reply({ content: 'Closing ticket...', flags: 64 });
+    await generateAndSendTranscript(interaction.channel, interaction.guild, interaction.user.tag);
 });
 
 // ================= ANTI RAID (QUARANTINE) =================

@@ -65,6 +65,7 @@ const claimedTickets = new Map();
 const appealSessions = new Collection();
 const quarantinedRoles = new Map(); // userId -> array van role ids van voor de quarantaine
 const ticketOwners = new Map(); // channelId -> userId, om transcript ook naar de maker te sturen
+const inactivityTimers = new Map(); // channelId -> { timeout, ownerId }, voor /inactive
 
 // ================= SLASH COMMANDS REGISTREREN =================
 // Draait automatisch bij elke opstart van de bot. Hierdoor is er geen
@@ -115,8 +116,32 @@ const slashCommands = [
         .toJSON(),
 
     new SlashCommandBuilder()
-        .setName('closerq')
+        .setName('close')
         .setDescription('Sluit het huidige ticket en stuur een transcript')
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('closerequest')
+        .setDescription('Vraag als ticket-opener om het ticket te sluiten (staff moet accepteren)')
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('inactive')
+        .setDescription('Waarschuw de ticket-opener: reageer binnen 12 uur of het ticket sluit automatisch')
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('claim')
+        .setDescription('Claim het huidige ticket')
+        .toJSON(),
+
+    new SlashCommandBuilder()
+        .setName('add')
+        .setDescription('Voeg een gebruiker toe aan het huidige ticket')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('De gebruiker om toe te voegen')
+                .setRequired(true))
         .toJSON()
 
 ];
@@ -740,10 +765,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return interaction.reply({ content: `Channel renamed to \`${sanitized}\`.`, flags: 64 });
 });
 
-// ---------- /closerq ----------
+// ---------- /close ----------
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
-    if (interaction.commandName !== 'closerq') return;
+    if (interaction.commandName !== 'close') return;
     if (!isNewTicketChannel(interaction.channel)) {
         return interaction.reply({ content: 'This command only works in ticket channels.', flags: 64 });
     }
@@ -754,6 +779,184 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     await interaction.reply({ content: 'Closing ticket...', flags: 64 });
     await generateAndSendTranscript(interaction.channel, interaction.guild, interaction.user.tag);
+});
+
+// ---------- /closerequest ----------
+// De ticket-opener vraagt om te sluiten; staff moet dit accepteren of afwijzen.
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'closerequest') return;
+    if (!isNewTicketChannel(interaction.channel)) {
+        return interaction.reply({ content: 'This command only works in ticket channels.', flags: 64 });
+    }
+
+    const ownerId = ticketOwners.get(interaction.channel.id);
+    if (ownerId && interaction.user.id !== ownerId) {
+        return interaction.reply({ content: 'Only the ticket creator can request a close.', flags: 64 });
+    }
+
+    const embed = new EmbedBuilder()
+        .setColor('#0a0a0a')
+        .setTitle('Close Request <:Clarity:1522719037610790923>')
+        .setDescription(`${interaction.user} has requested to close this ticket.\n\nStaff can accept or deny below.`);
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('closerequest_accept')
+            .setLabel('Accept')
+            .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+            .setCustomId('closerequest_deny')
+            .setLabel('Deny')
+            .setStyle(ButtonStyle.Danger)
+    );
+
+    await interaction.reply({ embeds: [embed], components: [row] });
+});
+
+// ---------- Accept/Deny knoppen van /closerequest ----------
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isButton()) return;
+    if (interaction.customId !== 'closerequest_accept' && interaction.customId !== 'closerequest_deny') return;
+
+    if (!isTicketStaff(interaction.channel, interaction.member)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 }).catch(() => {});
+    }
+
+    if (interaction.customId === 'closerequest_accept') {
+        await interaction.update({
+            content: 'Close request accepted, closing ticket...',
+            embeds: [],
+            components: []
+        }).catch(() => {});
+
+        await generateAndSendTranscript(interaction.channel, interaction.guild, interaction.user.tag);
+    } else {
+        await interaction.update({
+            content: 'Close request denied. The ticket remains open.',
+            embeds: [],
+            components: []
+        }).catch(() => {});
+    }
+});
+
+// ---------- /inactive ----------
+// Waarschuwt de ticket-opener en sluit het ticket automatisch na 12 uur
+// zonder reactie. Let op: deze timer leeft alleen in het geheugen van het
+// bot-proces. Als de bot herstart (bijv. Render die slaapt/redeploy doet)
+// voordat de 12 uur voorbij zijn, gaat de timer verloren en moet /inactive
+// opnieuw gebruikt worden.
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'inactive') return;
+    if (!isNewTicketChannel(interaction.channel)) {
+        return interaction.reply({ content: 'This command only works in ticket channels.', flags: 64 });
+    }
+
+    if (!isTicketStaff(interaction.channel, interaction.member)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 });
+    }
+
+    const ownerId = ticketOwners.get(interaction.channel.id);
+    if (!ownerId) {
+        return interaction.reply({ content: 'Could not determine the ticket creator for this channel.', flags: 64 });
+    }
+
+    const existing = inactivityTimers.get(interaction.channel.id);
+    if (existing) clearTimeout(existing.timeout);
+
+    const channelId = interaction.channel.id;
+    const guildId = interaction.guild.id;
+
+    const timeout = setTimeout(async () => {
+        inactivityTimers.delete(channelId);
+
+        const guild = client.guilds.cache.get(guildId);
+        const ch = guild?.channels.cache.get(channelId);
+
+        if (ch) {
+            await ch.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setColor('#0a0a0a')
+                        .setDescription('This ticket has been automatically closed due to inactivity.')
+                ]
+            }).catch(() => {});
+
+            await generateAndSendTranscript(ch, guild, 'Auto-close (inactivity)');
+        }
+    }, 12 * 60 * 60 * 1000);
+
+    inactivityTimers.set(channelId, { timeout, ownerId });
+
+    const embed = new EmbedBuilder()
+        .setColor('#0a0a0a')
+        .setTitle('Inactivity Warning <:Clarity:1522719037610790923>')
+        .setDescription(
+`<@${ownerId}>, we haven't heard from you in a while.
+
+If you don't reply within **12 hours**, this ticket will automatically be closed.`
+        );
+
+    await interaction.reply({ content: `<@${ownerId}>`, embeds: [embed] });
+});
+
+// Annuleert de auto-close timer zodra de ticket-opener weer iets typt
+client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot || !message.guild) return;
+
+    const timer = inactivityTimers.get(message.channel.id);
+    if (!timer) return;
+    if (message.author.id !== timer.ownerId) return;
+
+    clearTimeout(timer.timeout);
+    inactivityTimers.delete(message.channel.id);
+
+    await message.channel.send({
+        embeds: [
+            new EmbedBuilder()
+                .setColor('#0a0a0a')
+                .setDescription('✅ Activity detected — the auto-close timer has been cancelled.')
+        ]
+    }).catch(() => {});
+});
+
+// ---------- /claim ----------
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'claim') return;
+    if (!isNewTicketChannel(interaction.channel)) {
+        return interaction.reply({ content: 'This command only works in ticket channels.', flags: 64 });
+    }
+
+    if (!isTicketStaff(interaction.channel, interaction.member)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 });
+    }
+
+    claimedTickets.set(interaction.channel.id, interaction.user.tag);
+    return interaction.reply({ content: `Claimed by ${interaction.user}` });
+});
+
+// ---------- /add ----------
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'add') return;
+    if (!isNewTicketChannel(interaction.channel)) {
+        return interaction.reply({ content: 'This command only works in ticket channels.', flags: 64 });
+    }
+
+    if (!isTicketStaff(interaction.channel, interaction.member)) {
+        return interaction.reply({ content: 'No permission.', flags: 64 });
+    }
+
+    const userToAdd = interaction.options.getUser('user');
+
+    await interaction.channel.permissionOverwrites.edit(userToAdd.id, {
+        ViewChannel: true,
+        SendMessages: true
+    });
+
+    return interaction.reply({ content: `${userToAdd} has been added to this ticket.` });
 });
 
 // ================= ANTI RAID (QUARANTINE) =================
